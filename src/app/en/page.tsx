@@ -1,7 +1,7 @@
+import { CirclePageShell } from "@/app/CirclePageShell";
 import { HomeCircleApp } from "@/components/HomeCircleApp";
-import { CirclePageShell } from "./CirclePageShell";
 
-export default function Home() {
+export default function EnHome() {
   return (
     <CirclePageShell>
       <HomeCircleApp />
