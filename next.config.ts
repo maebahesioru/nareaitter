@@ -1,6 +1,5 @@
 import type { NextConfig } from "next";
 import path from "path";
-import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
 const nextConfig: NextConfig = {
   // 親ディレクトリに別の lockfile がある環境で警告を抑止
@@ -15,5 +14,3 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
-
-initOpenNextCloudflareForDev();
