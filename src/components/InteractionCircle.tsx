@@ -8,16 +8,19 @@ import type { CircleUser, SelfProfile } from "@/types/circle";
 type Props = {
   self: SelfProfile;
   users: CircleUser[];
+  maxUsers?: number;
 };
 
-export function InteractionCircle({ self, users }: Props) {
+export function InteractionCircle({ self, users, maxUsers }: Props) {
   const { t } = useLocale();
   const usersWithIcons = useMemo(
     () =>
-      users.filter((u) =>
-        Boolean(u.avatarUrl?.trim() || u.avatarUrlPreview?.trim()),
-      ),
-    [users],
+      users
+        .filter((u) =>
+          Boolean(u.avatarUrl?.trim() || u.avatarUrlPreview?.trim()),
+        )
+        .slice(0, maxUsers ?? users.length),
+    [users, maxUsers],
   );
 
   return (

@@ -2,7 +2,6 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocale } from "@/components/LocaleProvider";
-import { fetchProxiedImagesAsBlobMap } from "@/lib/fetch-proxied-batch-client";
 import { layoutUsers } from "@/lib/layout-circle";
 import { proxiedImageSrc } from "@/lib/proxied-image-src";
 import type { CircleUser, SelfProfile } from "@/types/circle";
@@ -356,57 +355,8 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
       ctx.scale(dpr, dpr);
       ctx.clearRect(0, 0, W, W);
 
-      const urlsToBatch = [
-        self.avatarUrlPreview,
-        self.avatarUrl,
-        ...slots.flatMap((s) => [
-          s.user.avatarUrlPreview,
-          s.user.avatarUrl,
-        ]),
-      ].filter((u): u is string => Boolean(u?.trim()));
-
-      let blobMap: Map<string, string> | undefined;
-      try {
-        const { map, revoke } = await fetchProxiedImagesAsBlobMap(urlsToBatch);
-        blobMap = map.size > 0 ? map : undefined;
-        blobRevokeRef.current = revoke;
-      } catch {
-        blobMap = undefined;
-      }
-
-      if (cancelled) {
-        blobRevokeRef.current?.();
-        blobRevokeRef.current = null;
-        return;
-      }
-
-      const loads: { key: string; img: HTMLImageElement }[] = [];
-
-      const [selfImg, ...peerImgs] = await Promise.all([
-        loadImageFirstAvailable(blobMap, self.avatarUrlPreview, self.avatarUrl),
-        ...slots.map((s) =>
-          loadImageFirstAvailable(
-            blobMap,
-            s.user.avatarUrlPreview,
-            s.user.avatarUrl,
-          ),
-        ),
-      ]);
-      if (cancelled) return;
-      if (selfImg) loads.push({ key: "self", img: selfImg });
-      slots.forEach((s, i) => {
-        const img = peerImgs[i];
-        if (img) loads.push({ key: s.user.id, img });
-      });
-
-      if (cancelled) return;
-
-      const byKey = new Map(loads.map((x) => [x.key, x.img]));
-
-      const hasSelfTile = Boolean(byKey.get("self") && self.screenName);
       const nPeers = slots.length;
-
-      if (!hasSelfTile && nPeers < 1) {
+      if (nPeers < 1 && !self.screenName) {
         if (!cancelled) setCaptureReady(true);
         return;
       }
@@ -419,69 +369,59 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
         peerCells = bestPeerCellsAvoidingCenter(nPeers, W, halfSelf);
       }
 
-      for (let i = 0; i < slots.length; i++) {
+      const shouldUpgrade = (p?: string, h?: string) =>
+        Boolean(p?.trim() && h?.trim() && p !== h);
+
+      // 1枚ずつ取得して逐次描画
+      const drawPeer = async (i: number) => {
+        if (cancelled) return;
         const slot = slots[i];
-        const img = byKey.get(slot.user.id);
-        if (!img) continue;
         const cell = peerCells[i];
-        if (!cell) continue;
+        if (!cell) return;
         const half = peerHalfDraw(cell.cellW, cell.cellH);
+        const img = await loadImageFirstAvailable(
+          undefined,
+          slot.user.avatarUrlPreview,
+          slot.user.avatarUrl,
+        );
+        if (cancelled || !img) return;
         drawImageCoverInSquare(ctx, img, cell.cx, cell.cy, half);
+
+        // HD版があれば差し替え
+        if (shouldUpgrade(slot.user.avatarUrlPreview, slot.user.avatarUrl)) {
+          try {
+            const hd = await loadImage(slot.user.avatarUrl!.trim());
+            if (!cancelled) drawImageCoverInSquare(ctx, hd, cell.cx, cell.cy, half);
+          } catch { /* skip */ }
+        }
+      };
+
+      // 自分のアイコンを先に描画
+      const selfImg = await loadImageFirstAvailable(
+        undefined,
+        self.avatarUrlPreview,
+        self.avatarUrl,
+      );
+      if (!cancelled && selfImg && self.screenName) {
+        drawImageCoverInSquare(ctx, selfImg, W / 2, W / 2, halfSelf);
       }
 
-      if (hasSelfTile) {
-        const selfImg = byKey.get("self");
-        if (selfImg) {
+      // ピアを1枚ずつ描画（並列数を制限して順次表示）
+      for (let i = 0; i < slots.length; i++) {
+        if (cancelled) return;
+        await drawPeer(i);
+        // 自分を最前面に再描画
+        if (!cancelled && selfImg && self.screenName) {
           drawImageCoverInSquare(ctx, selfImg, W / 2, W / 2, halfSelf);
         }
       }
 
-      const shouldUpgrade = (p?: string, h?: string) => {
-        const a = p?.trim();
-        const b = h?.trim();
-        return Boolean(a && b && a !== b);
-      };
-
-      const [peerHdRows, selfHdImg] = await Promise.all([
-        Promise.all(
-          slots.map(async (slot, i) => {
-            const u = slot.user;
-            if (!shouldUpgrade(u.avatarUrlPreview, u.avatarUrl)) {
-              return { i, img: null as HTMLImageElement | null };
-            }
-            try {
-              const img = await loadImage(u.avatarUrl!.trim(), blobMap);
-              return { i, img };
-            } catch {
-              return { i, img: null };
-            }
-          }),
-        ),
-        (async (): Promise<HTMLImageElement | null> => {
-          if (
-            !hasSelfTile ||
-            !shouldUpgrade(self.avatarUrlPreview, self.avatarUrl) ||
-            !self.avatarUrl?.trim()
-          ) {
-            return null;
-          }
-          try {
-            return await loadImage(self.avatarUrl.trim(), blobMap);
-          } catch {
-            return null;
-          }
-        })(),
-      ]);
-      if (cancelled) return;
-      for (const { i, img } of peerHdRows) {
-        if (!img) continue;
-        const cell = peerCells[i];
-        if (!cell) continue;
-        const half = peerHalfDraw(cell.cellW, cell.cellH);
-        drawImageCoverInSquare(ctx, img, cell.cx, cell.cy, half);
-      }
-      if (selfHdImg) {
-        drawImageCoverInSquare(ctx, selfHdImg, W / 2, W / 2, halfSelf);
+      // HD版の自分アイコン
+      if (!cancelled && self.screenName && shouldUpgrade(self.avatarUrlPreview, self.avatarUrl)) {
+        try {
+          const hd = await loadImage(self.avatarUrl!.trim());
+          if (!cancelled) drawImageCoverInSquare(ctx, hd, W / 2, W / 2, halfSelf);
+        } catch { /* skip */ }
       }
 
       if (!cancelled) setCaptureReady(true);

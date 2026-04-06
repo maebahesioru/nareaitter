@@ -1,7 +1,0 @@
-[build]
-  command = "pnpm install && pnpm run build"
-  publish = ".next"
-
-[build.environment]
-  NODE_VERSION = "20"
-  PNPM_VERSION = "10"

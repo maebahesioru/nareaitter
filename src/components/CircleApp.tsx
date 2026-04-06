@@ -50,6 +50,7 @@ export function CircleApp(props: CircleAppProps = {}) {
     toYou: number;
     fromYou: number;
   } | null>(null);
+  const [maxUsers, setMaxUsers] = useState(9999);
 
   const fetchYahooMentions = useCallback(async (overrideHandle?: string) => {
     const name = (overrideHandle ?? yahooHandle).trim().replace(/^@+/, "");
@@ -216,6 +217,21 @@ export function CircleApp(props: CircleAppProps = {}) {
             {t.countsUnit ? ` ${t.countsUnit}` : ""}
           </p>
         )}
+        {users.length > 0 && (
+          <div className="mt-4 flex items-center gap-3">
+            <label className="shrink-0 text-xs font-medium text-zinc-600 dark:text-zinc-500">
+              表示人数: <strong className="text-zinc-900 dark:text-zinc-200">{Math.min(maxUsers, users.length)}</strong>/{users.length}
+            </label>
+            <input
+              type="range"
+              min={1}
+              max={users.length}
+              value={maxUsers}
+              onChange={(e) => setMaxUsers(Number(e.target.value))}
+              className="flex-1"
+            />
+          </div>
+        )}
       </section>
 
       {error && (
@@ -237,13 +253,13 @@ export function CircleApp(props: CircleAppProps = {}) {
               @{self.screenName}
               {t.tableTitle}
             </p>
-            <InteractionCircle self={self} users={users} />
+            <InteractionCircle self={self} users={users} maxUsers={maxUsers} />
             <p className="mt-3 text-center text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
               {t.tableHint}
             </p>
           </>
         ) : (
-          <InteractionCircle self={self} users={users} />
+          <InteractionCircle self={self} users={users} maxUsers={maxUsers} />
         )}
       </div>
 
