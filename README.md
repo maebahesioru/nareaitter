@@ -1,12 +1,3 @@
----
-title: nareaitter
-emoji: 🐦
-colorFrom: blue
-colorTo: green
-sdk: docker
-pinned: false
----
-
 # nareaitter
 
 Twitter風の馴れ合いサークルアプリケーション
