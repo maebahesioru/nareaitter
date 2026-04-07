@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 import path from "path";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   // 親ディレクトリに別の lockfile がある環境で警告を抑止
   outputFileTracingRoot: path.join(__dirname),
   images: {
