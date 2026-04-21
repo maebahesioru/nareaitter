@@ -3,6 +3,7 @@ import { Geist_Mono, Noto_Sans_JP } from "next/font/google";
 import { headers } from "next/headers";
 import { DonationPopup } from "@/components/DonationPopup";
 import { HtmlLang } from "@/components/HtmlLang";
+import { HkmProBanner } from "@/components/HkmPro";
 import { LocaleProvider } from "@/components/LocaleProvider";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { SITE_DESCRIPTION } from "@/lib/site-meta";
@@ -140,6 +141,7 @@ export default function RootLayout({
           <ThemeProvider>
             <DonationPopup />
             {children}
+            <HkmProBanner />
           </ThemeProvider>
         </LocaleProvider>
       </body>
