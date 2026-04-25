@@ -3,7 +3,6 @@ import { Geist_Mono, Noto_Sans_JP } from "next/font/google";
 import { headers } from "next/headers";
 import { DonationPopup } from "@/components/DonationPopup";
 import { HtmlLang } from "@/components/HtmlLang";
-import { HkmProBanner } from "@/components/HkmPro";
 import { LocaleProvider } from "@/components/LocaleProvider";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { SITE_DESCRIPTION } from "@/lib/site-meta";
@@ -141,10 +140,8 @@ export default function RootLayout({
           <ThemeProvider>
             <DonationPopup />
             {children}
-            <HkmProBanner />
           </ThemeProvider>
         </LocaleProvider>
-              <script src="https://hikakinmaniacoin.hikamer.f5.si/ad.js" data-user-id="cmo8lk1kj0000aggyuhzgv5vk" async></script>
       </body>
     </html>
   );
