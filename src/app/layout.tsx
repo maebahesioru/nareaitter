@@ -81,6 +81,7 @@ export async function generateMetadata(): Promise<Metadata> {
       title: "Twitter馴れ合いサークル",
       description: SITE_DESCRIPTION,
       creator: "@maebahesioru2",
+      images: ["/opengraph-image"],
     },
     robots: {
       index: true,

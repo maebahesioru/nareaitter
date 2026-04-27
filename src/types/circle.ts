@@ -12,6 +12,20 @@ export type CircleUser = {
   interactionCount?: number;
 };
 
+export type FamilyRelationType = "self" | "parent" | "spouse" | "child" | "sibling" | "relative";
+
+export type FamilyTreeNode = {
+  user: CircleUser;
+  relation: FamilyRelationType;
+  confidence: number; // 0-100
+  children?: FamilyTreeNode[];
+};
+
+export type FamilyTreeData = {
+  root: FamilyTreeNode;
+  branches: Record<FamilyRelationType, FamilyTreeNode[]>;
+};
+
 export type SelfProfile = {
   screenName: string;
   displayName: string;

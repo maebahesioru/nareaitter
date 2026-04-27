@@ -16,12 +16,19 @@ import { ThemeToggle } from "./ThemeToggle";
 
 const EMPTY_SELF: SelfProfile = { screenName: "", displayName: "" };
 
-/** インライン style（vw・三角関数）由来の SSR/CSR 不一致を避ける */
 const InteractionCircle = dynamic(
   () =>
     import("./InteractionCircle").then((m) => ({ default: m.InteractionCircle })),
   { ssr: false },
 );
+
+const FamilyTreeCanvas = dynamic(
+  () =>
+    import("./FamilyTreeCanvas").then((m) => ({ default: m.FamilyTreeCanvas })),
+  { ssr: false },
+);
+
+type ViewMode = "circle" | "family";
 
 type YahooMentionsResponse = {
   screenName: string;
@@ -51,6 +58,7 @@ export function CircleApp(props: CircleAppProps = {}) {
     fromYou: number;
   } | null>(null);
   const [maxUsers, setMaxUsers] = useState(9999);
+  const [viewMode, setViewMode] = useState<ViewMode>("circle");
 
   const fetchYahooMentions = useCallback(async (overrideHandle?: string) => {
     const name = (overrideHandle ?? yahooHandle).trim().replace(/^@+/, "");
@@ -247,16 +255,53 @@ export function CircleApp(props: CircleAppProps = {}) {
         ref={captureRef}
         className="overflow-visible rounded-2xl border border-zinc-200/80 bg-zinc-50 p-4 dark:border-white/10 dark:bg-[#09090b] sm:p-6"
       >
+        {self.screenName && users.length > 0 && (
+          <div className="mb-4 flex justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => setViewMode("circle")}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                viewMode === "circle"
+                  ? "bg-emerald-600 text-white shadow"
+                  : "bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+              }`}
+            >
+              {t.tabCircle}
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("family")}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                viewMode === "family"
+                  ? "bg-emerald-600 text-white shadow"
+                  : "bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+              }`}
+            >
+              {t.tabFamily}
+            </button>
+          </div>
+        )}
         {self.screenName && users.length > 0 ? (
           <>
             <p className="mb-3 text-center text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
               @{self.screenName}
-              {t.tableTitle}
+              {viewMode === "circle" ? t.tableTitle : t.familyTitle}
             </p>
-            <InteractionCircle self={self} users={users} maxUsers={maxUsers} />
-            <p className="mt-3 text-center text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-              {t.tableHint}
-            </p>
+            {viewMode === "circle" ? (
+              <>
+                <InteractionCircle self={self} users={users} maxUsers={maxUsers} />
+                <p className="mt-3 text-center text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+                  {t.tableHint}
+                </p>
+              </>
+            ) : (
+              <>
+                <FamilyTreeCanvas self={self} users={users} />
+                <p className="mt-3 text-center text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+                  {t.familyHint}
+                </p>
+              </>
+            )}
           </>
         ) : (
           <InteractionCircle self={self} users={users} maxUsers={maxUsers} />

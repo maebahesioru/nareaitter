@@ -50,6 +50,23 @@ export type Messages = {
   langEn: string;
   errEnterName: string;
   errFetch: string;
+  tabCircle: string;
+  tabFamily: string;
+  familyTitle: string;
+  familyHint: string;
+  relationSelf: string;
+  relationSpouse: string;
+  relationParent: string;
+  relationChild: string;
+  relationSibling: string;
+  relationRelative: string;
+  relationGrandparent: string;
+  relationGreatGrandparent: string;
+  relationGrandchild: string;
+  relationUncle: string;
+  relationCousin: string;
+  relationNephew: string;
+  relationExtended: string;
 };
 
 export const messages: Record<Locale, Messages> = {
@@ -113,6 +130,24 @@ export const messages: Record<Locale, Messages> = {
     langEn: "English",
     errEnterName: "X のユーザー名（例: nhk_news）を入力してください。",
     errFetch: "取得に失敗しました。",
+    tabCircle: "サークル",
+    tabFamily: "家族ツリー",
+    familyTitle: "の家族ツリー",
+    familyHint:
+      "メンションのやり取りから、Twitter上の「家族」関係を予測表示しています。あくまで目安です。",
+    relationSelf: "自分",
+    relationSpouse: "配偶者",
+    relationParent: "親",
+    relationChild: "子ども",
+    relationSibling: "兄弟・姉妹",
+    relationRelative: "親戚",
+    relationGrandparent: "祖父母",
+    relationGreatGrandparent: "曽祖父母",
+    relationGrandchild: "孫",
+    relationUncle: "叔父・叔母",
+    relationCousin: "いとこ",
+    relationNephew: "甥・姪",
+    relationExtended: "その他の親戚",
   },
   en: {
     appTitle: "Twitter Mutual Circle",
@@ -173,6 +208,24 @@ export const messages: Record<Locale, Messages> = {
     langEn: "English",
     errEnterName: "Enter an X username (e.g. nhk_news).",
     errFetch: "Failed to load data.",
+    tabCircle: "Circle",
+    tabFamily: "Family Tree",
+    familyTitle: "'s Family Tree",
+    familyHint:
+      "Predicts 'family' relationships on Twitter based on mention patterns. Results are approximate.",
+    relationSelf: "Self",
+    relationSpouse: "Spouse",
+    relationParent: "Parent",
+    relationChild: "Child",
+    relationSibling: "Sibling",
+    relationRelative: "Relative",
+    relationGrandparent: "Grandparent",
+    relationGreatGrandparent: "Great-grandparent",
+    relationGrandchild: "Grandchild",
+    relationUncle: "Uncle/Aunt",
+    relationCousin: "Cousin",
+    relationNephew: "Nephew/Niece",
+    relationExtended: "Extended Family",
   },
 };
 
