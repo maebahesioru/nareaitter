@@ -102,7 +102,7 @@ export async function generateMetadata(): Promise<Metadata> {
       },
     },
     icons: {
-      icon: [{ url: "/icon.svg", type: "image/svg+xml", sizes: "any" }],
+      icon: "/icon",
     },
     other: {
       "google-adsense-account": "ca-pub-9868361167191737",
