@@ -43,7 +43,8 @@ export function pickSelfProfileImageFromYahoo(
   return null;
 }
 
-const YAHOO_RT = "https://search.yahoo.co.jp/realtime/api/v1/pagination";
+const YAHOO_BASE = (process.env.YAHOO_PROXY || "https://search.yahoo.co.jp/realtime/api/v1").replace(/\/$/, "");
+const YAHOO_RT = `${YAHOO_BASE}/pagination`;
 export const RESULTS_PER_PAGE = 40;
 /**
  * 1 クエリあたりの start ページ数上限（40 件×ページ）。
