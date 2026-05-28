@@ -2,6 +2,7 @@ import type {
   YahooPaginationResponse,
   YahooRealtimeEntry,
 } from "@/types/yahoo-realtime";
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 
 function normalizeYahooProfileImageUrl(raw: string): string | null {
   const t = raw.trim();
@@ -46,15 +47,38 @@ export function pickSelfProfileImageFromYahoo(
 const YAHOO_DIRECT_BASE = "https://search.yahoo.co.jp/realtime/api/v1";
 const YAHOO_PROXY_BASE = process.env.YAHOO_PROXY?.replace(/\/$/, "");
 
+/** HTTP/SOCKSプロキシの場合は undici ProxyAgent を初期化 */
+const proxyDispatcher: import("undici").ProxyAgent | undefined =
+  YAHOO_PROXY_BASE?.startsWith("http://") || YAHOO_PROXY_BASE?.startsWith("socks")
+    ? new ProxyAgent({ uri: YAHOO_PROXY_BASE })
+    : undefined;
+
 async function yahooFetch(pathAndQuery: string): Promise<Response> {
-  const directRes = await fetch(`${YAHOO_DIRECT_BASE}${pathAndQuery}`, { headers: YAHOO_HEADERS, cache: "no-store" });
-  if (directRes.ok || !YAHOO_PROXY_BASE) return directRes;
-  return fetch(`${YAHOO_PROXY_BASE}${pathAndQuery}`, { headers: YAHOO_HEADERS, cache: "no-store" });
+  const url = `${YAHOO_DIRECT_BASE}${pathAndQuery}`;
+
+  // HTTP/SOCKSプロキシ経由（undici ProxyAgent）
+  if (proxyDispatcher) {
+    return undiciFetch(url, {
+      headers: YAHOO_HEADERS,
+      dispatcher: proxyDispatcher,
+    }) as unknown as Response;
+  }
+
+  // 中継URL経由（https://...）
+  if (YAHOO_PROXY_BASE?.startsWith("https://")) {
+    return fetch(`${YAHOO_PROXY_BASE}${pathAndQuery}`, {
+      headers: YAHOO_HEADERS,
+      cache: "no-store",
+    });
+  }
+
+  // 直接アクセス
+  return fetch(url, { headers: YAHOO_HEADERS, cache: "no-store" });
 }
 export const RESULTS_PER_PAGE = 40;
 /**
  * 1 クエリあたりの start ページ数上限（40 件×ページ）。
- * 250 ページを一度に並列すると Yahoo 側で詰まり 1〜数分かかることがあるため抑える。
+ * 並列しすぎるとYahooにブロックされるため控えめに。
  */
 export const MAX_START_PARALLEL_PAGES = 100;
 /** 同時に飛ばす Yahoo リクエスト数（チャンク）。残りは順次ウェーブ */
