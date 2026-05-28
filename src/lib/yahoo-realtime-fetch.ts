@@ -2,7 +2,6 @@ import type {
   YahooPaginationResponse,
   YahooRealtimeEntry,
 } from "@/types/yahoo-realtime";
-import { ProxyAgent, fetch as undiciFetch } from "undici";
 
 function normalizeYahooProfileImageUrl(raw: string): string | null {
   const t = raw.trim();
@@ -46,22 +45,23 @@ export function pickSelfProfileImageFromYahoo(
 
 const YAHOO_DIRECT_BASE = "https://search.yahoo.co.jp/realtime/api/v1";
 const YAHOO_PROXY_BASE = process.env.YAHOO_PROXY?.replace(/\/$/, "");
-
-/** HTTP/SOCKSプロキシの場合は undici ProxyAgent を初期化 */
-const proxyDispatcher: import("undici").ProxyAgent | undefined =
-  YAHOO_PROXY_BASE?.startsWith("http://") || YAHOO_PROXY_BASE?.startsWith("socks")
-    ? new ProxyAgent({ uri: YAHOO_PROXY_BASE })
-    : undefined;
+const YAHOO_HTTP_PROXY =
+  YAHOO_PROXY_BASE?.startsWith("http://") ? YAHOO_PROXY_BASE : null;
 
 async function yahooFetch(pathAndQuery: string): Promise<Response> {
   const url = `${YAHOO_DIRECT_BASE}${pathAndQuery}`;
 
-  // HTTP/SOCKSプロキシ経由（undici ProxyAgent）
-  if (proxyDispatcher) {
-    return undiciFetch(url, {
-      headers: YAHOO_HEADERS,
-      dispatcher: proxyDispatcher,
-    }) as unknown as Response;
+  // HTTPプロキシ経由（YAHOO_PROXY=http://...）
+  if (YAHOO_HTTP_PROXY) {
+    // Node.js fetchは https_proxy 環境変数で自動プロキシする
+    // ただしプロセス全体に影響するので、明示的にプロキシ経由させる
+    // undiciに依存したくないので、プロセス環境変数を一時的に使う
+    process.env.https_proxy = YAHOO_HTTP_PROXY;
+    try {
+      return await fetch(url, { headers: YAHOO_HEADERS, cache: "no-store" });
+    } finally {
+      delete process.env.https_proxy;
+    }
   }
 
   // 中継URL経由（https://...）
@@ -76,12 +76,7 @@ async function yahooFetch(pathAndQuery: string): Promise<Response> {
   return fetch(url, { headers: YAHOO_HEADERS, cache: "no-store" });
 }
 export const RESULTS_PER_PAGE = 40;
-/**
- * 1 クエリあたりの start ページ数上限（40 件×ページ）。
- * 並列しすぎるとYahooにブロックされるため控えめに。
- */
 export const MAX_START_PARALLEL_PAGES = 100;
-/** 同時に飛ばす Yahoo リクエスト数（チャンク）。残りは順次ウェーブ */
 const YAHOO_PARALLEL_CHUNK = 20;
 
 const YAHOO_HEADERS: HeadersInit = {
@@ -100,7 +95,6 @@ function buildSearchParams(
   opts: {
     start?: number;
     oldestTweetId?: string;
-    /** 新着: 省略または `t` / 話題: `h` */
     md?: string;
   },
 ): URLSearchParams {
@@ -132,10 +126,6 @@ export function getEntries(data: YahooPaginationResponse): YahooRealtimeEntry[] 
   return data.timeline?.entry ?? [];
 }
 
-/**
- * `start` をチャンク単位で並列取得し、重複除去したエントリを返す。
- * ページ数は {@link MAX_START_PARALLEL_PAGES}（全件一括より Yahoo が詰まりにくい）。
- */
 export async function fetchByStartParallel(
   p: string,
   options: { md?: string; maxPages?: number } = {},
@@ -164,7 +154,6 @@ export async function fetchByStartParallel(
   return [...byId.values()];
 }
 
-/** 本人投稿（ID:）かつ本文にメンションが含まれるツイート */
 export function isOutgoingMentionTweet(
   entry: YahooRealtimeEntry,
 ): boolean {
@@ -172,9 +161,6 @@ export function isOutgoingMentionTweet(
   return Array.isArray(m) && m.length > 0;
 }
 
-/**
- * 本人に来たメンション: クエリ `@screenName`（ユーザー宛ての投稿）。
- */
 export async function fetchMentionsToYou(
   screenName: string,
 ): Promise<YahooRealtimeEntry[]> {
@@ -185,10 +171,6 @@ export async function fetchMentionsToYou(
   return entries.slice(0, 10000);
 }
 
-/**
- * 本人がするメンション: `ID:screenName` で本人投稿を取得し、`mentions` ありのみ残す。
- * まず `start` でページ取得 → フィルタ後 10000 件未満なら `oldestTweetId` で追補。
- */
 export async function fetchMentionsFromYou(
   screenName: string,
 ): Promise<YahooRealtimeEntry[]> {
@@ -239,7 +221,6 @@ export async function fetchMentionsFromYou(
   return collected.slice(0, 10000);
 }
 
-/** 並列ページをまとめた集合のうち、最も古いツイート ID（カーソル継続用） */
 function oldestTweetIdInBatch(entries: YahooRealtimeEntry[]): string | undefined {
   let min: bigint | undefined;
   let minId: string | undefined;
@@ -258,9 +239,6 @@ function oldestTweetIdInBatch(entries: YahooRealtimeEntry[]): string | undefined
   return minId;
 }
 
-/**
- * 受信・送信を同時に走らせる（合計 500 リクエストの並列 + 追補は逐次）。
- */
 export async function fetchMentionsBothParallel(screenName: string): Promise<{
   mentionsToYou: YahooRealtimeEntry[];
   mentionsFromYou: YahooRealtimeEntry[];
@@ -276,7 +254,6 @@ export async function fetchMentionsBothParallel(screenName: string): Promise<{
   return { mentionsToYou, mentionsFromYou };
 }
 
-/** 集計: あなたにメンションしてきたユーザー（投稿者）ごとの件数 */
 export function aggregateMentionAuthors(
   mentionsToYou: YahooRealtimeEntry[],
 ): Record<string, number> {
@@ -288,7 +265,6 @@ export function aggregateMentionAuthors(
   return map;
 }
 
-/** 集計: あなたがメンションした相手の screenName ごとの件数 */
 export function aggregateMentionTargets(
   mentionsFromYou: YahooRealtimeEntry[],
   selfScreenName: string,
