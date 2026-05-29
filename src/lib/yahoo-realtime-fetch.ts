@@ -2,7 +2,10 @@ import type {
   YahooPaginationResponse,
   YahooRealtimeEntry,
 } from "@/types/yahoo-realtime";
-import { ProxyAgent, fetch as undiciFetch } from "undici";
+import { execFile } from "child_process";
+import { promisify } from "util";
+
+const execFileAsync = promisify(execFile);
 
 function normalizeYahooProfileImageUrl(raw: string): string | null {
   const t = raw.trim();
@@ -44,21 +47,33 @@ export function pickSelfProfileImageFromYahoo(
 
 const YAHOO_DIRECT_BASE = "https://search.yahoo.co.jp/realtime/api/v1";
 const YAHOO_PROXY_BASE = process.env.YAHOO_PROXY?.replace(/\/$/, "");
+const YAHOO_HTTP_PROXY = YAHOO_PROXY_BASE?.startsWith("http://") ? YAHOO_PROXY_BASE : null;
 
-const proxyDispatcher: import("undici").ProxyAgent | undefined =
-  YAHOO_PROXY_BASE?.startsWith("http://") || YAHOO_PROXY_BASE?.startsWith("socks")
-    ? new ProxyAgent({ uri: YAHOO_PROXY_BASE })
-    : undefined;
+/** curl --proxy 経由でYahoo APIを呼ぶ（HTTPプロキシ用・依存ゼロ） */
+async function yahooFetchViaCurl(pathAndQuery: string): Promise<Response> {
+  const url = `${YAHOO_DIRECT_BASE}${pathAndQuery}`;
+  const { stdout } = await execFileAsync("curl", [
+    "-s", "--max-time", "30",
+    "--proxy", YAHOO_HTTP_PROXY!,
+    "-H", `User-Agent: ${YAHOO_HEADERS["User-Agent"]}`,
+    "-H", `Accept: ${YAHOO_HEADERS["Accept"]}`,
+    "-H", `Referer: ${YAHOO_HEADERS["Referer"]}`,
+    url,
+  ], { timeout: 35000, maxBuffer: 5 * 1024 * 1024 });
+
+  if (!stdout.trim().startsWith("{")) {
+    throw new Error("Yahoo API non-JSON response");
+  }
+  return new Response(stdout, {
+    status: 200,
+    headers: { "Content-Type": "application/json; charset=utf-8" },
+  });
+}
 
 async function yahooFetch(pathAndQuery: string): Promise<Response> {
-  const url = `${YAHOO_DIRECT_BASE}${pathAndQuery}`;
-
-  // HTTP/SOCKSプロキシ経由（undici ProxyAgent）
-  if (proxyDispatcher) {
-    return undiciFetch(url, {
-      headers: YAHOO_HEADERS,
-      dispatcher: proxyDispatcher,
-    }) as unknown as Response;
+  // HTTPプロキシ経由（curl exec）
+  if (YAHOO_HTTP_PROXY) {
+    return yahooFetchViaCurl(pathAndQuery);
   }
 
   // 中継URL経由（https://...）
@@ -66,8 +81,8 @@ async function yahooFetch(pathAndQuery: string): Promise<Response> {
     return fetch(`${YAHOO_PROXY_BASE}${pathAndQuery}`, { headers: YAHOO_HEADERS, cache: "no-store" });
   }
 
-  // 直接
-  return fetch(url, { headers: YAHOO_HEADERS, cache: "no-store" });
+  // 直接アクセス
+  return fetch(`${YAHOO_DIRECT_BASE}${pathAndQuery}`, { headers: YAHOO_HEADERS, cache: "no-store" });
 }
 
 export const RESULTS_PER_PAGE = 40;
