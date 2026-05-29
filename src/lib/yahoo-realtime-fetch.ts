@@ -2,6 +2,7 @@ import type {
   YahooPaginationResponse,
   YahooRealtimeEntry,
 } from "@/types/yahoo-realtime";
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 
 function normalizeYahooProfileImageUrl(raw: string): string | null {
   const t = raw.trim();
@@ -16,7 +17,6 @@ function normalizeYahooProfileImageUrl(raw: string): string | null {
   return u;
 }
 
-/** あなた宛メンションの投稿者 → Yahoo の profileImage（仮アイコン用） */
 export function buildYahooAuthorProfileImageMap(
   mentionsToYou: YahooRealtimeEntry[],
 ): Record<string, string> {
@@ -32,7 +32,6 @@ export function buildYahooAuthorProfileImageMap(
   return map;
 }
 
-/** 本人投稿タイムラインの先頭付近の profileImage（自分の仮アイコン） */
 export function pickSelfProfileImageFromYahoo(
   mentionsFromYou: YahooRealtimeEntry[],
 ): string | null {
@@ -45,36 +44,32 @@ export function pickSelfProfileImageFromYahoo(
 
 const YAHOO_DIRECT_BASE = "https://search.yahoo.co.jp/realtime/api/v1";
 const YAHOO_PROXY_BASE = process.env.YAHOO_PROXY?.replace(/\/$/, "");
-const YAHOO_HTTP_PROXY =
-  YAHOO_PROXY_BASE?.startsWith("http://") ? YAHOO_PROXY_BASE : null;
+
+const proxyDispatcher: import("undici").ProxyAgent | undefined =
+  YAHOO_PROXY_BASE?.startsWith("http://") || YAHOO_PROXY_BASE?.startsWith("socks")
+    ? new ProxyAgent({ uri: YAHOO_PROXY_BASE })
+    : undefined;
 
 async function yahooFetch(pathAndQuery: string): Promise<Response> {
   const url = `${YAHOO_DIRECT_BASE}${pathAndQuery}`;
 
-  // HTTPプロキシ経由（YAHOO_PROXY=http://...）
-  if (YAHOO_HTTP_PROXY) {
-    // Node.js fetchは https_proxy 環境変数で自動プロキシする
-    // ただしプロセス全体に影響するので、明示的にプロキシ経由させる
-    // undiciに依存したくないので、プロセス環境変数を一時的に使う
-    process.env.https_proxy = YAHOO_HTTP_PROXY;
-    try {
-      return await fetch(url, { headers: YAHOO_HEADERS, cache: "no-store" });
-    } finally {
-      delete process.env.https_proxy;
-    }
+  // HTTP/SOCKSプロキシ経由（undici ProxyAgent）
+  if (proxyDispatcher) {
+    return undiciFetch(url, {
+      headers: YAHOO_HEADERS,
+      dispatcher: proxyDispatcher,
+    }) as unknown as Response;
   }
 
   // 中継URL経由（https://...）
   if (YAHOO_PROXY_BASE?.startsWith("https://")) {
-    return fetch(`${YAHOO_PROXY_BASE}${pathAndQuery}`, {
-      headers: YAHOO_HEADERS,
-      cache: "no-store",
-    });
+    return fetch(`${YAHOO_PROXY_BASE}${pathAndQuery}`, { headers: YAHOO_HEADERS, cache: "no-store" });
   }
 
-  // 直接アクセス
+  // 直接
   return fetch(url, { headers: YAHOO_HEADERS, cache: "no-store" });
 }
+
 export const RESULTS_PER_PAGE = 40;
 export const MAX_START_PARALLEL_PAGES = 100;
 const YAHOO_PARALLEL_CHUNK = 20;
