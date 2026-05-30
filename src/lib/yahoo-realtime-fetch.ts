@@ -49,12 +49,82 @@ const YAHOO_DIRECT_BASE = "https://search.yahoo.co.jp/realtime/api/v1";
 const YAHOO_PROXY_BASE = process.env.YAHOO_PROXY?.replace(/\/$/, "");
 const YAHOO_HTTP_PROXY = YAHOO_PROXY_BASE?.startsWith("http://") ? YAHOO_PROXY_BASE : null;
 
-/** curl --proxy 経由でYahoo APIを呼ぶ（HTTPプロキシ用・依存ゼロ） */
-async function yahooFetchViaCurl(pathAndQuery: string): Promise<Response> {
+// ── プロキシ自動ローテーション ────────────────────
+
+const PROXY_REFRESH_MS = 10 * 60 * 1000; // 10分
+const PROXY_MAX = 30;                     // プール最大数
+const PROXY_TEST_TIMEOUT = 6;             // 疎通テストタイムアウト（秒）
+const PROXY_SCRAPE_URL =
+  "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all";
+
+let proxyPool: { addr: string; latency: number }[] = [];
+let proxyPoolTs = 0;
+let proxyPoolRefreshing = false;
+
+/** proxyscrape.com からリスト取得 */
+async function fetchProxyList(): Promise<string[]> {
+  const resp = await fetch(PROXY_SCRAPE_URL, { signal: AbortSignal.timeout(8000) });
+  const text = await resp.text();
+  return text.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+}
+
+/** 1つのプロキシでYahoo API疎通テスト */
+async function testProxyLatency(addr: string): Promise<number | null> {
+  const t0 = performance.now();
+  try {
+    const { stdout } = await execFileAsync("curl", [
+      "-s", "--max-time", String(PROXY_TEST_TIMEOUT),
+      "--proxy", addr,
+      "-H", `User-Agent: ${YAHOO_HEADERS["User-Agent"]}`,
+      "-H", `Accept: ${YAHOO_HEADERS["Accept"]}`,
+      "-H", `Referer: ${YAHOO_HEADERS["Referer"]}`,
+      `${YAHOO_DIRECT_BASE}/pagination?p=@v&results=1&start=1`,
+    ], { timeout: (PROXY_TEST_TIMEOUT + 2) * 1000, maxBuffer: 1024 });
+    if (stdout.trim().startsWith("{")) {
+      return performance.now() - t0;
+    }
+  } catch { /* noop */ }
+  return null;
+}
+
+/** プロキシプールをリフレッシュ（リスト取得＋疎通テスト） */
+async function refreshProxyPool(): Promise<void> {
+  if (proxyPoolRefreshing) return;
+  proxyPoolRefreshing = true;
+  try {
+    const addrs = await fetchProxyList();
+    // 最初のPROXY_MAX個だけテスト（全部テストすると遅すぎる）
+    const candidates = addrs.slice(0, PROXY_MAX * 3);
+    const results = await Promise.all(
+      candidates.map(async addr => {
+        const lat = await testProxyLatency(addr);
+        return lat !== null ? { addr, latency: lat } : null;
+      })
+    );
+    const valid = results.filter(Boolean) as { addr: string; latency: number }[];
+    valid.sort((a, b) => a.latency - b.latency);
+    proxyPool = valid.slice(0, PROXY_MAX);
+    proxyPoolTs = Date.now();
+  } catch { /* pool維持 */ }
+  proxyPoolRefreshing = false;
+}
+
+/** 現在のプールから最も遅延の小さいプロキシを取得。空ならnull */
+function bestProxy(): string | null {
+  return proxyPool.length > 0 ? proxyPool[0].addr : null;
+}
+
+/** 使えなくなったプロキシをプールから除外 */
+function discardProxy(addr: string): void {
+  proxyPool = proxyPool.filter(p => p.addr !== addr);
+}
+
+/** curl exec（プロキシ指定版） */
+async function yahooFetchViaCurl(pathAndQuery: string, proxy: string): Promise<Response> {
   const url = `${YAHOO_DIRECT_BASE}${pathAndQuery}`;
   const { stdout } = await execFileAsync("curl", [
     "-s", "--max-time", "30",
-    "--proxy", YAHOO_HTTP_PROXY!,
+    "--proxy", proxy,
     "-H", `User-Agent: ${YAHOO_HEADERS["User-Agent"]}`,
     "-H", `Accept: ${YAHOO_HEADERS["Accept"]}`,
     "-H", `Referer: ${YAHOO_HEADERS["Referer"]}`,
@@ -71,18 +141,44 @@ async function yahooFetchViaCurl(pathAndQuery: string): Promise<Response> {
 }
 
 async function yahooFetch(pathAndQuery: string): Promise<Response> {
-  // HTTPプロキシ経由（curl exec）
+  // 固定プロキシが設定されていればそれを使う（従来動作）
   if (YAHOO_HTTP_PROXY) {
-    return yahooFetchViaCurl(pathAndQuery);
+    return yahooFetchViaCurl(pathAndQuery, YAHOO_HTTP_PROXY);
   }
 
-  // 中継URL経由（https://...）
+  // プロキシプールが未初期化・期限切れの場合はリフレッシュ（fire & forget）
+  if (!proxyPoolTs || Date.now() - proxyPoolTs > PROXY_REFRESH_MS) {
+    refreshProxyPool(); // fire & forget
+  }
+
+  // プロキシプールがあればローテーション
+  if (proxyPool.length > 0) {
+    const proxy = bestProxy();
+    if (proxy) {
+      try {
+        return await yahooFetchViaCurl(pathAndQuery, proxy);
+      } catch {
+        discardProxy(proxy);
+        // 次のプロキシがあればリトライ
+        const next = bestProxy();
+        if (next) {
+          return yahooFetchViaCurl(pathAndQuery, next);
+        }
+        // 全滅したら直接アクセスにフォールスルー
+      }
+    }
+  }
+
+  // 直接アクセス（フォールバック）
+  const directRes = await fetch(`${YAHOO_DIRECT_BASE}${pathAndQuery}`, { headers: YAHOO_HEADERS, cache: "no-store" });
+  if (directRes.ok) return directRes;
+
+  // 中継URL経由
   if (YAHOO_PROXY_BASE?.startsWith("https://")) {
     return fetch(`${YAHOO_PROXY_BASE}${pathAndQuery}`, { headers: YAHOO_HEADERS, cache: "no-store" });
   }
 
-  // 直接アクセス
-  return fetch(`${YAHOO_DIRECT_BASE}${pathAndQuery}`, { headers: YAHOO_HEADERS, cache: "no-store" });
+  return directRes;
 }
 
 export const RESULTS_PER_PAGE = 40;
