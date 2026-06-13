@@ -54,8 +54,13 @@ const YAHOO_HTTP_PROXY = YAHOO_PROXY_BASE?.startsWith("http://") ? YAHOO_PROXY_B
 const PROXY_REFRESH_MS = 10 * 60 * 1000; // 10分
 const PROXY_MAX = 30;                     // プール最大数
 const PROXY_TEST_TIMEOUT = 6;             // 疎通テストタイムアウト（秒）
-const PROXY_SCRAPE_URL =
-  "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all";
+const PROXY_SOURCES = [
+  "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
+  "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+  "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+  "https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt",
+  "https://www.proxy-list.download/api/v1/get?type=http",
+];
 
 let proxyPool: { addr: string; latency: number }[] = [];
 let proxyPoolTs = 0;
@@ -63,9 +68,25 @@ let proxyPoolRefreshing = false;
 
 /** proxyscrape.com からリスト取得 */
 async function fetchProxyList(): Promise<string[]> {
-  const resp = await fetch(PROXY_SCRAPE_URL, { signal: AbortSignal.timeout(8000) });
-  const text = await resp.text();
-  return text.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+  const results = await Promise.allSettled(
+    PROXY_SOURCES.map(async (url) => {
+      const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      const text = await resp.text();
+      return text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0 && l.includes(":"));
+    }),
+  );
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const r of results) {
+    if (r.status !== "fulfilled") continue;
+    for (const addr of r.value) {
+      if (!seen.has(addr)) {
+        seen.add(addr);
+        merged.push(addr);
+      }
+    }
+  }
+  return merged;
 }
 
 /** 1つのプロキシでYahoo API疎通テスト */
@@ -141,39 +162,48 @@ async function yahooFetchViaCurl(pathAndQuery: string, proxy: string): Promise<R
 }
 
 async function yahooFetch(pathAndQuery: string): Promise<Response> {
-  // 固定プロキシが設定されていればそれを使う（従来動作）
-  if (YAHOO_HTTP_PROXY) {
-    return yahooFetchViaCurl(pathAndQuery, YAHOO_HTTP_PROXY);
+  // YAHOO_PROXYがあればプールに追加
+  if (YAHOO_HTTP_PROXY && !proxyPool.some(p => p.addr === YAHOO_HTTP_PROXY)) {
+    proxyPool.unshift({ addr: YAHOO_HTTP_PROXY, latency: 0 });
   }
 
-  // プロキシプールが未初期化・期限切れの場合はリフレッシュ（fire & forget）
-  if (!proxyPoolTs || Date.now() - proxyPoolTs > PROXY_REFRESH_MS) {
-    refreshProxyPool(); // fire & forget
-  }
-
-  // プロキシプールがあればローテーション
-  if (proxyPool.length > 0) {
-    const proxy = bestProxy();
-    if (proxy) {
+  // プールが空ならリフレッシュ + 固定プロキシで直接試行
+  if (proxyPool.length === 0) {
+    const p = refreshProxyPool();
+    // 固定プロキシがあれば待たずに試す
+    if (YAHOO_HTTP_PROXY) {
       try {
-        return await yahooFetchViaCurl(pathAndQuery, proxy);
-      } catch {
-        discardProxy(proxy);
-        // 次のプロキシがあればリトライ
-        const next = bestProxy();
-        if (next) {
-          return yahooFetchViaCurl(pathAndQuery, next);
-        }
-        // 全滅したら直接アクセスにフォールスルー
-      }
+        return await yahooFetchViaCurl(pathAndQuery, YAHOO_HTTP_PROXY);
+      } catch { /* fallthrough */ }
+    }
+    await p;
+  }
+
+  // プールから最速順に試す
+  const tried = new Set<string>();
+  while (proxyPool.length > 0) {
+    const proxy = bestProxy();
+    if (!proxy) break;
+    tried.add(proxy);
+    try {
+      const res = await yahooFetchViaCurl(pathAndQuery, proxy);
+      return res;
+    } catch {
+      discardProxy(proxy);
     }
   }
 
-  // 直接アクセス（フォールバック）
+  // 固定プロキシが未試行なら試す
+  if (YAHOO_HTTP_PROXY && !tried.has(YAHOO_HTTP_PROXY)) {
+    try {
+      return await yahooFetchViaCurl(pathAndQuery, YAHOO_HTTP_PROXY);
+    } catch { /* fallthrough */ }
+  }
+
+  // 直接アクセス（最終手段）
   const directRes = await fetch(`${YAHOO_DIRECT_BASE}${pathAndQuery}`, { headers: YAHOO_HEADERS, cache: "no-store" });
   if (directRes.ok) return directRes;
 
-  // 中継URL経由
   if (YAHOO_PROXY_BASE?.startsWith("https://")) {
     return fetch(`${YAHOO_PROXY_BASE}${pathAndQuery}`, { headers: YAHOO_HEADERS, cache: "no-store" });
   }
