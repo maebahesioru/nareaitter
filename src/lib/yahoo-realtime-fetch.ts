@@ -215,12 +215,12 @@ export const RESULTS_PER_PAGE = 40;
 export const MAX_START_PARALLEL_PAGES = 100;
 const YAHOO_PARALLEL_CHUNK = 20;
 
-const YAHOO_HEADERS: HeadersInit = {
+const YAHOO_HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
   Accept: "application/json, text/plain, */*",
   Referer: "https://search.yahoo.co.jp/realtime/search",
-};
+} as const;
 
 export function normalizeScreenName(raw: string): string {
   return raw.trim().replace(/^@+/, "");
