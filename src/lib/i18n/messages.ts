@@ -52,6 +52,8 @@ export type Messages = {
   errFetch: string;
   tabCircle: string;
   tabFamily: string;
+  tabAI: string;
+  aiTitle: string;
   familyTitle: string;
   familyHint: string;
   relationSelf: string;
@@ -132,6 +134,8 @@ export const messages: Record<Locale, Messages> = {
     errFetch: "取得に失敗しました。",
     tabCircle: "サークル",
     tabFamily: "家族ツリー",
+    tabAI: "AI診断",
+    aiTitle: "のAI診断",
     familyTitle: "の家族ツリー",
     familyHint:
       "メンションのやり取りから、Twitter上の「家族」関係を予測表示しています。あくまで目安です。",
@@ -210,6 +214,8 @@ export const messages: Record<Locale, Messages> = {
     errFetch: "Failed to load data.",
     tabCircle: "Circle",
     tabFamily: "Family Tree",
+    tabAI: "AI Diagnosis",
+    aiTitle: "'s AI Diagnosis",
     familyTitle: "'s Family Tree",
     familyHint:
       "Predicts 'family' relationships on Twitter based on mention patterns. Results are approximate.",

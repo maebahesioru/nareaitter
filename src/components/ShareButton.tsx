@@ -139,6 +139,7 @@ export function ShareButton({
         type="button"
         onClick={share}
         disabled={busy || disabled}
+        suppressHydrationWarning
         title={
           disabled
             ? (disabledReason ?? t.shareDisabled)

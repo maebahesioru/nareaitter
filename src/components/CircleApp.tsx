@@ -28,7 +28,13 @@ const FamilyTreeCanvas = dynamic(
   { ssr: false },
 );
 
-type ViewMode = "circle" | "family";
+const AIDiagnosisPanel = dynamic(
+  () =>
+    import("./AIDiagnosisPanel").then((m) => ({ default: m.AIDiagnosisPanel })),
+  { ssr: false },
+);
+
+type ViewMode = "circle" | "family" | "ai";
 
 type YahooMentionsResponse = {
   screenName: string;
@@ -279,13 +285,24 @@ export function CircleApp(props: CircleAppProps = {}) {
             >
               {t.tabFamily}
             </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("ai")}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                viewMode === "ai"
+                  ? "bg-emerald-600 text-white shadow"
+                  : "bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+              }`}
+            >
+              {t.tabAI}
+            </button>
           </div>
         )}
         {self.screenName && users.length > 0 ? (
           <>
             <p className="mb-3 text-center text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
               @{self.screenName}
-              {viewMode === "circle" ? t.tableTitle : t.familyTitle}
+              {viewMode === "circle" ? t.tableTitle : viewMode === "family" ? t.familyTitle : t.aiTitle}
             </p>
             {viewMode === "circle" ? (
               <>
@@ -294,13 +311,15 @@ export function CircleApp(props: CircleAppProps = {}) {
                   {t.tableHint}
                 </p>
               </>
-            ) : (
+            ) : viewMode === "family" ? (
               <>
                 <FamilyTreeCanvas self={self} users={users} />
                 <p className="mt-3 text-center text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
                   {t.familyHint}
                 </p>
               </>
+            ) : (
+              <AIDiagnosisPanel self={self} users={users} />
             )}
           </>
         ) : (

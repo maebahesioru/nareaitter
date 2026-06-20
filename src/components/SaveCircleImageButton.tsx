@@ -64,6 +64,7 @@ export function SaveCircleImageButton({
         type="button"
         onClick={save}
         disabled={busy || disabled}
+        suppressHydrationWarning
         title={
           disabled
             ? (disabledReason ?? t.saveDisabled)

@@ -2,10 +2,7 @@ import type {
   YahooPaginationResponse,
   YahooRealtimeEntry,
 } from "@/types/yahoo-realtime";
-import { execFile } from "child_process";
-import { promisify } from "util";
-
-const execFileAsync = promisify(execFile);
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 
 function normalizeYahooProfileImageUrl(raw: string): string | null {
   const t = raw.trim();
@@ -54,13 +51,8 @@ const YAHOO_HTTP_PROXY = YAHOO_PROXY_BASE?.startsWith("http://") ? YAHOO_PROXY_B
 const PROXY_REFRESH_MS = 10 * 60 * 1000; // 10分
 const PROXY_MAX = 30;                     // プール最大数
 const PROXY_TEST_TIMEOUT = 6;             // 疎通テストタイムアウト（秒）
-const PROXY_SOURCES = [
-  "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
-  "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
-  "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-  "https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt",
-  "https://www.proxy-list.download/api/v1/get?type=http",
-];
+const PROXY_SOURCE =
+  "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all";
 
 let proxyPool: { addr: string; latency: number }[] = [];
 let proxyPoolTs = 0;
@@ -68,43 +60,28 @@ let proxyPoolRefreshing = false;
 
 /** proxyscrape.com からリスト取得 */
 async function fetchProxyList(): Promise<string[]> {
-  const results = await Promise.allSettled(
-    PROXY_SOURCES.map(async (url) => {
-      const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
-      const text = await resp.text();
-      return text.split("\n").map((l) => l.trim()).filter((l) => l.length > 0 && l.includes(":"));
-    }),
-  );
-  const seen = new Set<string>();
-  const merged: string[] = [];
-  for (const r of results) {
-    if (r.status !== "fulfilled") continue;
-    for (const addr of r.value) {
-      if (!seen.has(addr)) {
-        seen.add(addr);
-        merged.push(addr);
-      }
-    }
-  }
-  return merged;
+  const resp = await fetch(PROXY_SOURCE, { signal: AbortSignal.timeout(8000) });
+  const text = await resp.text();
+  return text.split("\n").map((l) => l.trim()).filter((l) => l.includes(":"));
 }
 
 /** 1つのプロキシでYahoo API疎通テスト */
 async function testProxyLatency(addr: string): Promise<number | null> {
   const t0 = performance.now();
   try {
-    const { stdout } = await execFileAsync("curl", [
-      "-s", "--max-time", String(PROXY_TEST_TIMEOUT),
-      "--proxy", addr,
-      "-H", `User-Agent: ${YAHOO_HEADERS["User-Agent"]}`,
-      "-H", `Accept: ${YAHOO_HEADERS["Accept"]}`,
-      "-H", `Referer: ${YAHOO_HEADERS["Referer"]}`,
-      `${YAHOO_DIRECT_BASE}/pagination?p=@v&results=1&start=1`,
-    ], { timeout: (PROXY_TEST_TIMEOUT + 2) * 1000, maxBuffer: 1024 });
-    if (stdout.trim().startsWith("{")) {
-      return performance.now() - t0;
+    const agent = new ProxyAgent({ uri: `http://${addr}`, requestTls: { rejectUnauthorized: false } });
+    const res = await undiciFetch(`${YAHOO_DIRECT_BASE}/pagination?p=@v&results=1&start=1`, {
+      dispatcher: agent as unknown as undefined,
+      headers: YAHOO_HEADERS,
+      signal: AbortSignal.timeout(PROXY_TEST_TIMEOUT * 1000),
+    });
+    if (res.ok) {
+      const text = await res.text();
+      if (text.trim().startsWith("{")) {
+        return performance.now() - t0;
+      }
     }
-  } catch { /* noop */ }
+  } catch { /* ignore */ }
   return null;
 }
 
@@ -141,21 +118,20 @@ function discardProxy(addr: string): void {
 }
 
 /** curl exec（プロキシ指定版） */
-async function yahooFetchViaCurl(pathAndQuery: string, proxy: string): Promise<Response> {
+async function yahooFetchViaProxy(pathAndQuery: string, proxy: string): Promise<Response> {
   const url = `${YAHOO_DIRECT_BASE}${pathAndQuery}`;
-  const { stdout } = await execFileAsync("curl", [
-    "-s", "--max-time", "30",
-    "--proxy", proxy,
-    "-H", `User-Agent: ${YAHOO_HEADERS["User-Agent"]}`,
-    "-H", `Accept: ${YAHOO_HEADERS["Accept"]}`,
-    "-H", `Referer: ${YAHOO_HEADERS["Referer"]}`,
-    url,
-  ], { timeout: 35000, maxBuffer: 5 * 1024 * 1024 });
-
-  if (!stdout.trim().startsWith("{")) {
+  const agent = new ProxyAgent({ uri: `http://${proxy}`, requestTls: { rejectUnauthorized: false } });
+  const res = await undiciFetch(url, {
+    dispatcher: agent as unknown as undefined,
+    headers: YAHOO_HEADERS,
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) throw new Error(`Yahoo API HTTP ${res.status}`);
+  const text = await res.text();
+  if (!text.trim().startsWith("{")) {
     throw new Error("Yahoo API non-JSON response");
   }
-  return new Response(stdout, {
+  return new Response(text, {
     status: 200,
     headers: { "Content-Type": "application/json; charset=utf-8" },
   });
@@ -173,7 +149,7 @@ async function yahooFetch(pathAndQuery: string): Promise<Response> {
     // 固定プロキシがあれば待たずに試す
     if (YAHOO_HTTP_PROXY) {
       try {
-        return await yahooFetchViaCurl(pathAndQuery, YAHOO_HTTP_PROXY);
+        return await yahooFetchViaProxy(pathAndQuery, YAHOO_HTTP_PROXY);
       } catch { /* fallthrough */ }
     }
     await p;
@@ -186,7 +162,7 @@ async function yahooFetch(pathAndQuery: string): Promise<Response> {
     if (!proxy) break;
     tried.add(proxy);
     try {
-      const res = await yahooFetchViaCurl(pathAndQuery, proxy);
+      const res = await yahooFetchViaProxy(pathAndQuery, proxy);
       return res;
     } catch {
       discardProxy(proxy);
@@ -196,7 +172,7 @@ async function yahooFetch(pathAndQuery: string): Promise<Response> {
   // 固定プロキシが未試行なら試す
   if (YAHOO_HTTP_PROXY && !tried.has(YAHOO_HTTP_PROXY)) {
     try {
-      return await yahooFetchViaCurl(pathAndQuery, YAHOO_HTTP_PROXY);
+      return await yahooFetchViaProxy(pathAndQuery, YAHOO_HTTP_PROXY);
     } catch { /* fallthrough */ }
   }
 
