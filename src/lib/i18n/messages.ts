@@ -53,7 +53,9 @@ export type Messages = {
   tabCircle: string;
   tabFamily: string;
   tabAI: string;
+  tabValue: string;
   aiTitle: string;
+  valueTitle: string;
   familyTitle: string;
   familyHint: string;
   relationSelf: string;
@@ -135,7 +137,9 @@ export const messages: Record<Locale, Messages> = {
     tabCircle: "サークル",
     tabFamily: "家族ツリー",
     tabAI: "AI診断",
+    tabValue: "売却価格",
     aiTitle: "のAI診断",
+    valueTitle: "のアカウント推定売却価格",
     familyTitle: "の家族ツリー",
     familyHint:
       "メンションのやり取りから、Twitter上の「家族」関係を予測表示しています。あくまで目安です。",
@@ -216,6 +220,8 @@ export const messages: Record<Locale, Messages> = {
     tabFamily: "Family Tree",
     tabAI: "AI Diagnosis",
     aiTitle: "'s AI Diagnosis",
+    tabValue: "Value",
+    valueTitle: "'s Account Value Est.",
     familyTitle: "'s Family Tree",
     familyHint:
       "Predicts 'family' relationships on Twitter based on mention patterns. Results are approximate.",

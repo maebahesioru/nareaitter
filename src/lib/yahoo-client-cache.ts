@@ -11,6 +11,11 @@ export type YahooCircleClientCache = {
   circleUsers?: CircleUser[];
   selfAvatarUrl?: string;
   selfAvatarUrlPreview?: string;
+  profileFollowers?: number;
+  profileFollowing?: number;
+  profileTweets?: number;
+  profileLikes?: number;
+  profileJoinedAt?: string;
 };
 
 export function readYahooCircleCache(

@@ -1,0 +1,11 @@
+node_modules
+.git
+.gitignore
+.next
+.env.local
+.env*.local
+README.md
+wrangler.jsonc
+wrangler.toml
+open-next.config.ts
+.github

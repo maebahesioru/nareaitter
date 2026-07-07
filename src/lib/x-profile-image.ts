@@ -6,7 +6,23 @@ const VX_USER_API = "https://api.vxtwitter.com";
 type FxTwitterUserResponse = {
   code: number;
   message: string;
-  user?: { avatar_url?: string };
+  user?: {
+    avatar_url?: string;
+    banner_url?: string;
+    followers?: number;
+    following?: number;
+    tweets?: number;
+    likes?: number;
+    created_at?: string;
+  };
+};
+
+export type XProfileData = {
+  followers: number;
+  following: number;
+  tweets: number;
+  likes: number;
+  joinedAt: string;
 };
 
 /**
@@ -101,4 +117,39 @@ export async function fetchXAvatarUrl(screenName: string): Promise<string | null
 /** サークル用。全試行で失敗したときは null（表示から除外） */
 export async function resolveCircleAvatarUrl(screenName: string): Promise<string | null> {
   return fetchXAvatarUrl(screenName);
+}
+
+/**
+ * fxtwitter の完全なユーザープロファイルを取得する。
+ * アカウント推定売却価格などの計算に使用。
+ */
+export async function resolveProfileData(screenName: string): Promise<XProfileData | null> {
+  const clean = screenName.replace(/^@/, "").trim();
+  if (!clean) return null;
+
+  for (let attempt = 0; attempt < AVATAR_RETRY_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      await new Promise((r) => setTimeout(r, AVATAR_RETRY_BASE_DELAY_MS * attempt));
+    }
+    try {
+      const res = await fetch(
+        `${FX_USER_API}/${encodeURIComponent(clean)}`,
+        { headers: { Accept: "application/json" } },
+      );
+      if (!res.ok) continue;
+      const data = (await res.json()) as FxTwitterUserResponse;
+      if (data.code !== 200 || !data.user) continue;
+
+      return {
+        followers: data.user.followers ?? 0,
+        following: data.user.following ?? 0,
+        tweets: data.user.tweets ?? 0,
+        likes: data.user.likes ?? 0,
+        joinedAt: data.user.created_at ?? "",
+      };
+    } catch {
+      // retry
+    }
+  }
+  return null;
 }

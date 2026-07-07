@@ -9,7 +9,7 @@ import {
   pickSelfProfileImageFromYahoo,
 } from "@/lib/yahoo-realtime-fetch";
 import { yahooAggregatesToCircleUsers } from "@/lib/yahoo-to-circle";
-import { resolveCircleAvatarUrl } from "@/lib/x-profile-image";
+import { resolveCircleAvatarUrl, resolveProfileData } from "@/lib/x-profile-image";
 
 /** Cloudflare Workers のリクエスト上限に合わせる（Vercel の 300s は使わない） */
 export const maxDuration = 120;
@@ -47,7 +47,7 @@ async function buildYahooPayload(
   if (buildCircle) {
     const yahooPeerImages = buildYahooAuthorProfileImageMap(mentionsToYou);
     const selfYahoo = pickSelfProfileImageFromYahoo(mentionsFromYou);
-    const [circleUsers, selfHd] = await Promise.all([
+    const [circleUsers, selfHd, profileData] = await Promise.all([
       yahooAggregatesToCircleUsers(
         authorsToYou,
         targetsFromYou,
@@ -55,10 +55,18 @@ async function buildYahooPayload(
         yahooPeerImages,
       ),
       resolveCircleAvatarUrl(name),
+      resolveProfileData(name),
     ]);
     payload.circleUsers = circleUsers;
     if (selfHd?.trim()) payload.selfAvatarUrl = selfHd.trim();
     if (selfYahoo) payload.selfAvatarUrlPreview = selfYahoo;
+    if (profileData) {
+      payload.profileFollowers = profileData.followers;
+      payload.profileFollowing = profileData.following;
+      payload.profileTweets = profileData.tweets;
+      payload.profileLikes = profileData.likes;
+      payload.profileJoinedAt = profileData.joinedAt;
+    }
   }
 
   return payload;

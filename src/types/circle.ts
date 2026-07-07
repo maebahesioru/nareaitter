@@ -35,6 +35,12 @@ export type SelfProfile = {
   avatarUrl?: string;
   /** あなたへの＋あなたからのメンション件数の合計（表示期間内） */
   mentionTotal?: number;
+  /** fxtwitter プロフィール（アカウント売却推定に使用） */
+  profileFollowers?: number;
+  profileFollowing?: number;
+  profileTweets?: number;
+  profileLikes?: number;
+  profileJoinedAt?: string;
 };
 
 /** グリッド上の相手ユーザー1件（位置は canvas 側で行列から決定） */

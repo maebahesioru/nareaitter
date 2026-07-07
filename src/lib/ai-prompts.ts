@@ -5,8 +5,7 @@ export type DiagnosisType =
   | "retire"
   | "compatibility"
   | "crush"
-  | "stalker"
-  | "value";
+  | "stalker";
 
 type PromptDef = {
   id: DiagnosisType;
@@ -44,12 +43,6 @@ export const DIAGNOSIS_DEFS: PromptDef[] = [
     id: "stalker",
     title: { ja: "こっそり見てる人推測", en: "Secret Viewer Detection" },
     desc: { ja: "自分へのメンションがないのに相互フォロワーなどからこっそり見てる人をAIが推測します", en: "AI detects users who watch without mentioning" },
-    needsPartner: false,
-  },
-  {
-    id: "value",
-    title: { ja: "アカウント売却価格推測", en: "Account Value Estimation" },
-    desc: { ja: "フォロワー数・エンゲージメント・活動頻度からアカウントの推定売却価格をAIが算出します", en: "AI estimates account sale value from followers, engagement, activity" },
     needsPartner: false,
   },
 ];
