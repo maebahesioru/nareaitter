@@ -2,11 +2,17 @@ import { unstable_cache } from "next/cache";
 import { NextRequest, NextResponse } from "next/server";
 import {
   fetchProxiedImageUpstream,
+  isKnownDeadImage,
   UpstreamImageError,
 } from "@/lib/image-proxy-upstream";
 
 /** CDN と揃え、オリジンでの再 fetch・再エンコード CPU を抑える */
 const IMAGE_PROXY_REVALIDATE_SEC = 604800;
+
+/** 消えた画像(404)の高速応答。エッジにも10分だけ載せる */
+const DEAD_HEADERS = {
+  "Cache-Control": "public, s-maxage=600, max-age=0",
+} as const;
 
 function stableImageCacheKey(raw: string): string {
   try {
@@ -23,6 +29,14 @@ export async function GET(req: NextRequest) {
   }
 
   const key = stableImageCacheKey(raw);
+
+  // 死んでいると分かっているURLはネットワーク・キャッシュを一切触らず即404
+  if (isKnownDeadImage(key)) {
+    return NextResponse.json(
+      { error: "画像を取得できませんでした。" },
+      { status: 404, headers: DEAD_HEADERS },
+    );
+  }
 
   try {
     const cached = await unstable_cache(
@@ -61,7 +75,7 @@ export async function GET(req: NextRequest) {
           error:
             "画像を取得できませんでした（Yahoo の URL の期限切れなどの可能性があります）。",
         },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: DEAD_HEADERS },
       );
     }
     return NextResponse.json({ error: "取得に失敗しました。" }, { status: 502 });

@@ -33,6 +33,29 @@ function isYimgHost(hostname: string): boolean {
   return hostname.endsWith(".yimg.jp") || hostname.endsWith(".yimg.com");
 }
 
+// ── 404のネガティブメモ ───────────────────────────
+// 消えたアバター(404)は毎回リトライしても無駄で、Referer 4連続試行のせいで
+// パイプラインの枠を長時間占有する。1時間だけ「死んでる」と記憶して即404を返す。
+
+const NEGATIVE_TTL_MS = 60 * 60 * 1000;
+const NEGATIVE_MAX = 20000;
+const deadUntil = new Map<string, number>();
+
+export function isKnownDeadImage(url: string): boolean {
+  const until = deadUntil.get(url);
+  if (until === undefined) return false;
+  if (Date.now() > until) {
+    deadUntil.delete(url);
+    return false;
+  }
+  return true;
+}
+
+function markDeadImage(url: string): void {
+  if (deadUntil.size >= NEGATIVE_MAX) deadUntil.clear();
+  deadUntil.set(url, Date.now() + NEGATIVE_TTL_MS);
+}
+
 async function fetchYimgImage(url: string): Promise<Response> {
   const ua = UPSTREAM_HEADERS["User-Agent"]!;
   let last: Response | null = null;
@@ -47,6 +70,8 @@ async function fetchYimgImage(url: string): Promise<Response> {
       next: { revalidate: 604800 },
     });
     if (res.ok) return res;
+    // 404/410 は Referer を変えても無駄なので即諦める
+    if (res.status === 404 || res.status === 410) return res;
     last = res;
   }
   return last!;
@@ -67,15 +92,24 @@ export async function fetchProxiedImageUpstream(rawUrl: string): Promise<{
     throw new Error("forbidden host");
   }
 
+  // 死んでると分かっているURLはネットワークに一切出ない
+  const cacheKey = target.toString();
+  if (isKnownDeadImage(cacheKey)) {
+    throw new UpstreamImageError("upstream 404 (memoized)", 404);
+  }
+
   const res = isYimgHost(target.hostname)
-    ? await fetchYimgImage(target.toString())
-    : await fetch(target.toString(), {
+    ? await fetchYimgImage(cacheKey)
+    : await fetch(cacheKey, {
         redirect: "follow",
         headers: UPSTREAM_HEADERS,
         next: { revalidate: 604800 },
       });
 
   if (!res.ok) {
+    if (res.status === 404 || res.status === 410) {
+      markDeadImage(cacheKey);
+    }
     throw new UpstreamImageError(`upstream ${res.status}`, res.status);
   }
 

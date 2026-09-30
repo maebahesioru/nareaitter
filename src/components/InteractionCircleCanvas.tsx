@@ -468,10 +468,6 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
             }
           });
         }
-        // 自分を最前面に再描画
-        if (selfImg && self.screenName) {
-          drawImageCoverInSquare(ctx, selfImg, W / 2, W / 2, halfSelf);
-        }
       }
 
       // HD差し替えの完了を待ってからキャプチャ可能にする（保存画質を保証）
@@ -479,6 +475,11 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
         hdJobs.filter((p): p is Promise<HTMLImageElement | null> => p !== null),
       );
       if (cancelled) return;
+
+      // 自分を最前面に（ピアのマスは中央を避けて配置されるので1回で足りる）
+      if (selfImg && self.screenName) {
+        drawImageCoverInSquare(ctx, selfImg, W / 2, W / 2, halfSelf);
+      }
 
       // HD版の自分アイコン
       if (!cancelled && self.screenName && shouldUpgrade(self.avatarUrlPreview, self.avatarUrl)) {
