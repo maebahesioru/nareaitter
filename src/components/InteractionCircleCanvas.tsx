@@ -396,7 +396,9 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
       // ピア画像は「連続パイプライン」で読み込む:
       // ・プレビューを最大 POOL 枚ぶん常時並列で取得（波ごとの全員待ちをやめて常に満員で流す）
       // ・描画はスロット順を維持し、届いた順に順次描画
-      const POOL = 24;
+      // POOL: 実測で16→48まで右肩上がり（VM100+トンネル経由で48でも劣化なし）。
+      // モバイルのメモリ/接続を考えて36に設定。
+      const POOL = 36;
       /** セルが小さいときは 48px のプレビューで十分なので HD は取得しない（通信削減） */
       const HD_UPGRADE_MIN_SIDE_PX = 36;
 
