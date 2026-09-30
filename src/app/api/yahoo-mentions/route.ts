@@ -88,6 +88,96 @@ function getCachedYahooPayload(name: string, buildCircle: boolean) {
   )();
 }
 
+// ── メモリSWR層 ─────────────────────────────────
+// unstable_cache は期限切れ後の「最初の1人」に再構築コスト(3〜5秒)を払わせる。
+// 薄いSWRキャッシュを上に置き、古いコピーを即返しつつ裏で再構築する。
+// → 2回目以降の同一ユーザーは実質いつでも即応答（再構築はユーザーを待たせない）
+
+/** これ以内なら「新鮮」としてそのまま返す */
+const MEM_FRESH_MS = 180_000;
+/** 裏での再構築が失敗したらこの間は再試行しない */
+const MEM_FAIL_RETRY_MS = 60_000;
+/** 保持件数（1件最大 ~450KB なので控えめに） */
+const MEM_MAX = 64;
+
+type MemEntry = {
+  payload?: Record<string, unknown>;
+  ts: number;
+  pending?: Promise<Record<string, unknown>>;
+  cooldownUntil?: number;
+};
+
+const memCache = new Map<string, MemEntry>();
+
+type ServeMode = "fresh" | "swr" | "build";
+
+function serveWithSWR(
+  key: string,
+  build: () => Promise<Record<string, unknown>>,
+): Promise<{ payload: Record<string, unknown>; mode: ServeMode }> {
+  const now = Date.now();
+  const entry = memCache.get(key);
+
+  if (entry?.payload && now - entry.ts <= MEM_FRESH_MS) {
+    return Promise.resolve({ payload: entry.payload, mode: "fresh" });
+  }
+
+  if (entry?.payload && entry.cooldownUntil && now < entry.cooldownUntil) {
+    return Promise.resolve({ payload: entry.payload, mode: "swr" });
+  }
+
+  if (entry?.pending) {
+    // 再構築中: 古いコピーがあれば即返し（SWR）、なければ完了を待つ
+    return entry.payload
+      ? Promise.resolve({ payload: entry.payload, mode: "swr" })
+      : entry.pending.then((payload) => ({ payload, mode: "build" }));
+  }
+
+  const pending = build().then(
+    (payload) => {
+      if (memCache.size >= MEM_MAX) {
+        let oldestKey: string | null = null;
+        let oldestTs = Infinity;
+        for (const [k, v] of memCache) {
+          if (v.ts < oldestTs) {
+            oldestTs = v.ts;
+            oldestKey = k;
+          }
+        }
+        if (oldestKey) memCache.delete(oldestKey);
+      }
+      memCache.set(key, { payload, ts: Date.now() });
+      return payload;
+    },
+    (err: unknown) => {
+      if (entry?.payload) {
+        memCache.set(key, {
+          payload: entry.payload,
+          ts: entry.ts,
+          cooldownUntil: Date.now() + MEM_FAIL_RETRY_MS,
+        });
+      } else {
+        memCache.delete(key);
+      }
+      throw err;
+    },
+  );
+
+  memCache.set(key, { payload: entry?.payload, ts: entry?.ts ?? 0, pending });
+
+  // 裏で走る再構築が失敗しても unhandledRejection にしない（cooldownで再試行管理）
+  void pending.catch(() => {});
+
+  return entry?.payload
+    ? Promise.resolve({ payload: entry.payload, mode: "swr" })
+    : pending.then((payload) => ({ payload, mode: "build" }));
+}
+
+function getServedYahooPayload(name: string, buildCircle: boolean) {
+  const key = `${name.toLowerCase()}:${buildCircle ? "circle" : "counts"}`;
+  return serveWithSWR(key, () => getCachedYahooPayload(name, buildCircle));
+}
+
 function parseBuildCircle(searchParams: URLSearchParams, body?: Body): boolean {
   if (body) return body.buildCircle === true;
   const v = searchParams.get("buildCircle");
@@ -135,11 +225,12 @@ export async function GET(req: NextRequest) {
   const buildCircle = parseBuildCircle(sp);
 
   try {
-    const payload = await getCachedYahooPayload(name, buildCircle);
+    const { payload, mode } = await getServedYahooPayload(name, buildCircle);
     return NextResponse.json(payload, {
       headers: {
         "Cache-Control":
           "public, s-maxage=300, stale-while-revalidate=1800, max-age=120",
+        "X-Nareai-Cache": mode,
       },
     });
   } catch {
@@ -181,8 +272,13 @@ export async function POST(req: Request) {
   }
 
   try {
-    const payload = await getCachedYahooPayload(name, body.buildCircle === true);
-    return NextResponse.json(payload);
+    const { payload, mode } = await getServedYahooPayload(
+      name,
+      body.buildCircle === true,
+    );
+    return NextResponse.json(payload, {
+      headers: { "X-Nareai-Cache": mode },
+    });
   } catch {
     return NextResponse.json(
       { error: "取得に失敗しました。しばらくしてからもう一度お試しください。" },
