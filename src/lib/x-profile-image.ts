@@ -86,14 +86,36 @@ const AVATAR_RETRY_ATTEMPTS = 3;
 const AVATAR_RETRY_BASE_DELAY_MS = 120;
 
 /**
- * fxtwitter と vxtwitter を同時に 1 回だけ叩く（両方成功時は fxtwitter 優先）。
+ * fxtwitter を先に試し、失敗したときだけ vxtwitter にフォールバックする。
+ * （従来は常に両方へ並列リクエストしており、取得数が単純に 2 倍だった）
  */
 async function fetchXAvatarUrlOnce(cleanScreenName: string): Promise<string | null> {
-  const [fromFx, fromVx] = await Promise.all([
-    fetchAvatarFxtwitter(cleanScreenName),
-    fetchAvatarVxtwitter(cleanScreenName),
-  ]);
-  return fromFx ?? fromVx ?? null;
+  const fromFx = await fetchAvatarFxtwitter(cleanScreenName);
+  if (fromFx) return fromFx;
+  return fetchAvatarVxtwitter(cleanScreenName);
+}
+
+/**
+ * 同一プロセス内の再取得を抑える。人気アカウントは複数のサークルに繰り返し現れるため、
+ * ここが効くと全体の取得数が大きく下がる。
+ */
+const AVATAR_MEM_TTL_MS = 6 * 60 * 60 * 1000;
+const AVATAR_MEM_MAX = 4096;
+const avatarMem = new Map<string, { t: number; url: string }>();
+
+function readAvatarMem(key: string): string | null {
+  const hit = avatarMem.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.t > AVATAR_MEM_TTL_MS) {
+    avatarMem.delete(key);
+    return null;
+  }
+  return hit.url;
+}
+
+function writeAvatarMem(key: string, url: string): void {
+  if (avatarMem.size >= AVATAR_MEM_MAX) avatarMem.clear();
+  avatarMem.set(key, { t: Date.now(), url });
 }
 
 /**
@@ -102,6 +124,9 @@ async function fetchXAvatarUrlOnce(cleanScreenName: string): Promise<string | nu
 export async function fetchXAvatarUrl(screenName: string): Promise<string | null> {
   const clean = screenName.replace(/^@/, "").trim();
   if (!clean) return null;
+  const key = clean.toLowerCase();
+  const cached = readAvatarMem(key);
+  if (cached) return cached;
   for (let attempt = 0; attempt < AVATAR_RETRY_ATTEMPTS; attempt++) {
     if (attempt > 0) {
       await new Promise((r) =>
@@ -109,7 +134,11 @@ export async function fetchXAvatarUrl(screenName: string): Promise<string | null
       );
     }
     const url = await fetchXAvatarUrlOnce(clean);
-    if (url?.trim()) return url.trim();
+    if (url?.trim()) {
+      const trimmed = url.trim();
+      writeAvatarMem(key, trimmed);
+      return trimmed;
+    }
   }
   return null;
 }

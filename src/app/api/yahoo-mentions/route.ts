@@ -38,11 +38,15 @@ async function buildYahooPayload(
       mentionsToYou: mentionsToYou.length,
       mentionsFromYou: mentionsFromYou.length,
     },
-    aggregates: {
+  };
+
+  // aggregates はクライアント未使用のため通常レスポンスには含めない（ペイロード削減）
+  if (!buildCircle) {
+    payload.aggregates = {
       authorsToYou,
       targetsFromYou,
-    },
-  };
+    };
+  }
 
   if (buildCircle) {
     const yahooPeerImages = buildYahooAuthorProfileImageMap(mentionsToYou);

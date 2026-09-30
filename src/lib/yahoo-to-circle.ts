@@ -4,6 +4,27 @@ import { resolveCircleAvatarUrl } from "@/lib/x-profile-image";
 /** 無制限並列だと FixTweet 系 API が 429 になり再試行で遅延が積む */
 const AVATAR_FETCH_CONCURRENCY = 14;
 
+/**
+ * 高画質（fxtwitter/vxtwitter）アバター取得のしきい値。
+ *
+ * Yahoo の profileImage（rts-pctr）は実測 48×48px しかないため、
+ * 描画セルが大きいときだけ HD を取りに行く。
+ * サークルのセル辺は「キャンバス幅 ÷ ceil(sqrt(人数))」で近似できるので、
+ * これが {@link HD_MIN_CELL_PX} 未満になる大人数サークルでは HD を全員分は取らない
+ * （1 アバターにつき最大 2 リクエスト × 1000 人分 → 数十件へ削減できる）。
+ */
+const HD_MIN_CELL_PX = 40;
+/** セル辺の概算に使う想定キャンバス幅（px） */
+const ASSUMED_CANVAS_W = 720;
+/** Yahoo プレビュー画像が無いユーザーの HD 救済フェッチ上限（表示消え防止） */
+const HD_RESCUE_MAX = 128;
+
+function estimatedCellPx(peerCount: number): number {
+  if (peerCount <= 0) return ASSUMED_CANVAS_W;
+  const cols = Math.max(1, Math.ceil(Math.sqrt(peerCount)));
+  return ASSUMED_CANVAS_W / cols;
+}
+
 async function mapWithConcurrency<T, R>(
   items: T[],
   concurrency: number,
@@ -49,13 +70,26 @@ export async function yahooAggregatesToCircleUsers(
   rows.sort((a, b) => b.n - a.n);
   const max = rows[0]?.n ?? 1;
 
+  const previewFor = (screen: string) =>
+    yahooPeerProfileByScreen[screen.toLowerCase()]?.trim() || undefined;
+
+  // どの行で HD を取るか先に決める（並列処理中に数え漏れしないように）
+  const hdForAll = estimatedCellPx(rows.length) >= HD_MIN_CELL_PX;
+  const hdIndexes = new Set<number>();
+  if (!hdForAll) {
+    for (let i = 0; i < rows.length && hdIndexes.size < HD_RESCUE_MAX; i++) {
+      // プレビューが無いユーザーは HD が無いと描画から消えるため優先的に救済する
+      if (!previewFor(rows[i].screen)) hdIndexes.add(i);
+    }
+  }
+
   const list = await mapWithConcurrency(
     rows,
     AVATAR_FETCH_CONCURRENCY,
     async (r, i) => {
-      const preview =
-        yahooPeerProfileByScreen[r.screen.toLowerCase()]?.trim() || undefined;
-      const hdRaw = await resolveCircleAvatarUrl(r.screen);
+      const preview = previewFor(r.screen);
+      const wantHd = hdForAll || hdIndexes.has(i);
+      const hdRaw = wantHd ? await resolveCircleAvatarUrl(r.screen) : null;
       const avatarUrl = hdRaw?.trim() || undefined;
       return {
         id: `yahoo-${r.screen}-${i}`,

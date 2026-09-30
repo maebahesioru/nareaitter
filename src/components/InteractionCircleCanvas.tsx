@@ -372,30 +372,6 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
       const shouldUpgrade = (p?: string, h?: string) =>
         Boolean(p?.trim() && h?.trim() && p !== h);
 
-      // 1枚ずつ取得して逐次描画
-      const drawPeer = async (i: number) => {
-        if (cancelled) return;
-        const slot = slots[i];
-        const cell = peerCells[i];
-        if (!cell) return;
-        const half = peerHalfDraw(cell.cellW, cell.cellH);
-        const img = await loadImageFirstAvailable(
-          undefined,
-          slot.user.avatarUrlPreview,
-          slot.user.avatarUrl,
-        );
-        if (cancelled || !img) return;
-        drawImageCoverInSquare(ctx, img, cell.cx, cell.cy, half);
-
-        // HD版があれば差し替え
-        if (shouldUpgrade(slot.user.avatarUrlPreview, slot.user.avatarUrl)) {
-          try {
-            const hd = await loadImage(slot.user.avatarUrl!.trim());
-            if (!cancelled) drawImageCoverInSquare(ctx, hd, cell.cx, cell.cy, half);
-          } catch { /* skip */ }
-        }
-      };
-
       // 自分のアイコンを先に描画
       const selfImg = await loadImageFirstAvailable(
         undefined,
@@ -406,12 +382,50 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
         drawImageCoverInSquare(ctx, selfImg, W / 2, W / 2, halfSelf);
       }
 
-      // ピアを1枚ずつ描画（並列数を制限して順次表示）
-      for (let i = 0; i < slots.length; i++) {
+      // ピアは並列でまとめて読み込み → 順番に描画
+      // （1枚ずつ逐次取得だと数百枚で待たされすぎるため 10 枚単位に）
+      const DRAW_CHUNK = 10;
+      /** セルが小さいときは 48px のプレビューで十分なので HD は取得しない（通信削減） */
+      const HD_UPGRADE_MIN_SIDE_PX = 36;
+      for (let i = 0; i < slots.length; i += DRAW_CHUNK) {
         if (cancelled) return;
-        await drawPeer(i);
+        const chunk = slots.slice(i, i + DRAW_CHUNK);
+        const loaded = await Promise.all(
+          chunk.map(async (slot, j) => {
+            const cell = peerCells[i + j];
+            if (!cell) return null;
+            const img = await loadImageFirstAvailable(
+              undefined,
+              slot.user.avatarUrlPreview,
+              slot.user.avatarUrl,
+            );
+            if (!img) return null;
+            let hd: HTMLImageElement | null = null;
+            const side = Math.min(cell.cellW, cell.cellH);
+            if (
+              side >= HD_UPGRADE_MIN_SIDE_PX &&
+              shouldUpgrade(slot.user.avatarUrlPreview, slot.user.avatarUrl)
+            ) {
+              try {
+                hd = await loadImage(slot.user.avatarUrl!.trim());
+              } catch {
+                /* skip */
+              }
+            }
+            return { cell, img, hd };
+          }),
+        );
+        if (cancelled) return;
+        for (const it of loaded) {
+          if (!it) continue;
+          const half = peerHalfDraw(it.cell.cellW, it.cell.cellH);
+          drawImageCoverInSquare(ctx, it.img, it.cell.cx, it.cell.cy, half);
+          if (it.hd) {
+            drawImageCoverInSquare(ctx, it.hd, it.cell.cx, it.cell.cy, half);
+          }
+        }
         // 自分を最前面に再描画
-        if (!cancelled && selfImg && self.screenName) {
+        if (selfImg && self.screenName) {
           drawImageCoverInSquare(ctx, selfImg, W / 2, W / 2, halfSelf);
         }
       }

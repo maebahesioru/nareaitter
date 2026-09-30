@@ -2,7 +2,6 @@ import type {
   YahooPaginationResponse,
   YahooRealtimeEntry,
 } from "@/types/yahoo-realtime";
-import { ProxyAgent, fetch as undiciFetch } from "undici";
 
 function normalizeYahooProfileImageUrl(raw: string): string | null {
   const t = raw.trim();
@@ -42,154 +41,17 @@ export function pickSelfProfileImageFromYahoo(
   return null;
 }
 
+// ── 取得戦略 ────────────────────────────────────
+//
+// 直接（サーバーが国内にある前提）が最速かつ安定（実測 0.2〜0.4 秒 / 20 並列で 200）。
+// 失敗が続いたときだけ、任意のリレー（YAHOO_PROXY=https://... の Cloudflare Worker 等）に逃げる。
+// かつてのようなスクレイプ系プロキシプールは、疎通テストだけで毎回大量のリクエストを消費し
+// 遅く不安定だったため廃止した（2026-09）。
+
 const YAHOO_DIRECT_BASE = "https://search.yahoo.co.jp/realtime/api/v1";
-const YAHOO_PROXY_BASE = process.env.YAHOO_PROXY?.replace(/\/$/, "");
-const YAHOO_HTTP_PROXY = YAHOO_PROXY_BASE?.startsWith("http://") ? YAHOO_PROXY_BASE : null;
-
-// ── プロキシ自動ローテーション ────────────────────
-
-const PROXY_REFRESH_MS = 10 * 60 * 1000; // 10分
-const PROXY_MAX = 30;                     // プール最大数
-const PROXY_TEST_TIMEOUT = 6;             // 疎通テストタイムアウト（秒）
-const PROXY_SOURCE =
-  "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all";
-
-let proxyPool: { addr: string; latency: number }[] = [];
-let proxyPoolTs = 0;
-let proxyPoolRefreshing = false;
-
-/** proxyscrape.com からリスト取得 */
-async function fetchProxyList(): Promise<string[]> {
-  const resp = await fetch(PROXY_SOURCE, { signal: AbortSignal.timeout(8000) });
-  const text = await resp.text();
-  return text.split("\n").map((l) => l.trim()).filter((l) => l.includes(":"));
-}
-
-/** 1つのプロキシでYahoo API疎通テスト */
-async function testProxyLatency(addr: string): Promise<number | null> {
-  const t0 = performance.now();
-  try {
-    const agent = new ProxyAgent({ uri: `http://${addr}`, requestTls: { rejectUnauthorized: false } });
-    const res = await undiciFetch(`${YAHOO_DIRECT_BASE}/pagination?p=@v&results=1&start=1`, {
-      dispatcher: agent as unknown as undefined,
-      headers: YAHOO_HEADERS,
-      signal: AbortSignal.timeout(PROXY_TEST_TIMEOUT * 1000),
-    });
-    if (res.ok) {
-      const text = await res.text();
-      if (text.trim().startsWith("{")) {
-        return performance.now() - t0;
-      }
-    }
-  } catch { /* ignore */ }
-  return null;
-}
-
-/** プロキシプールをリフレッシュ（リスト取得＋疎通テスト） */
-async function refreshProxyPool(): Promise<void> {
-  if (proxyPoolRefreshing) return;
-  proxyPoolRefreshing = true;
-  try {
-    const addrs = await fetchProxyList();
-    // 最初のPROXY_MAX個だけテスト（全部テストすると遅すぎる）
-    const candidates = addrs.slice(0, PROXY_MAX * 3);
-    const results = await Promise.all(
-      candidates.map(async addr => {
-        const lat = await testProxyLatency(addr);
-        return lat !== null ? { addr, latency: lat } : null;
-      })
-    );
-    const valid = results.filter(Boolean) as { addr: string; latency: number }[];
-    valid.sort((a, b) => a.latency - b.latency);
-    proxyPool = valid.slice(0, PROXY_MAX);
-    proxyPoolTs = Date.now();
-  } catch { /* pool維持 */ }
-  proxyPoolRefreshing = false;
-}
-
-/** 現在のプールから最も遅延の小さいプロキシを取得。空ならnull */
-function bestProxy(): string | null {
-  return proxyPool.length > 0 ? proxyPool[0].addr : null;
-}
-
-/** 使えなくなったプロキシをプールから除外 */
-function discardProxy(addr: string): void {
-  proxyPool = proxyPool.filter(p => p.addr !== addr);
-}
-
-/** curl exec（プロキシ指定版） */
-async function yahooFetchViaProxy(pathAndQuery: string, proxy: string): Promise<Response> {
-  const url = `${YAHOO_DIRECT_BASE}${pathAndQuery}`;
-  const agent = new ProxyAgent({ uri: `http://${proxy}`, requestTls: { rejectUnauthorized: false } });
-  const res = await undiciFetch(url, {
-    dispatcher: agent as unknown as undefined,
-    headers: YAHOO_HEADERS,
-    signal: AbortSignal.timeout(30000),
-  });
-  if (!res.ok) throw new Error(`Yahoo API HTTP ${res.status}`);
-  const text = await res.text();
-  if (!text.trim().startsWith("{")) {
-    throw new Error("Yahoo API non-JSON response");
-  }
-  return new Response(text, {
-    status: 200,
-    headers: { "Content-Type": "application/json; charset=utf-8" },
-  });
-}
-
-async function yahooFetch(pathAndQuery: string): Promise<Response> {
-  // YAHOO_PROXYがあればプールに追加
-  if (YAHOO_HTTP_PROXY && !proxyPool.some(p => p.addr === YAHOO_HTTP_PROXY)) {
-    proxyPool.unshift({ addr: YAHOO_HTTP_PROXY, latency: 0 });
-  }
-
-  // プールが空ならリフレッシュ + 固定プロキシで直接試行
-  if (proxyPool.length === 0) {
-    const p = refreshProxyPool();
-    // 固定プロキシがあれば待たずに試す
-    if (YAHOO_HTTP_PROXY) {
-      try {
-        return await yahooFetchViaProxy(pathAndQuery, YAHOO_HTTP_PROXY);
-      } catch { /* fallthrough */ }
-    }
-    await p;
-  }
-
-  // プールから最速順に試す
-  const tried = new Set<string>();
-  while (proxyPool.length > 0) {
-    const proxy = bestProxy();
-    if (!proxy) break;
-    tried.add(proxy);
-    try {
-      const res = await yahooFetchViaProxy(pathAndQuery, proxy);
-      return res;
-    } catch {
-      discardProxy(proxy);
-    }
-  }
-
-  // 固定プロキシが未試行なら試す
-  if (YAHOO_HTTP_PROXY && !tried.has(YAHOO_HTTP_PROXY)) {
-    try {
-      return await yahooFetchViaProxy(pathAndQuery, YAHOO_HTTP_PROXY);
-    } catch { /* fallthrough */ }
-  }
-
-  // 直接アクセス（最終手段）
-  const directRes = await fetch(`${YAHOO_DIRECT_BASE}${pathAndQuery}`, { headers: YAHOO_HEADERS, cache: "no-store" });
-  if (directRes.ok) return directRes;
-
-  if (YAHOO_PROXY_BASE?.startsWith("https://")) {
-    return fetch(`${YAHOO_PROXY_BASE}${pathAndQuery}`, { headers: YAHOO_HEADERS, cache: "no-store" });
-  }
-
-  return directRes;
-}
-
-export const RESULTS_PER_PAGE = 40;
-export const MAX_START_PARALLEL_PAGES = 100;
-const YAHOO_PARALLEL_CHUNK = 20;
+const YAHOO_RELAY_BASE = process.env.YAHOO_PROXY?.startsWith("https://")
+  ? process.env.YAHOO_PROXY.replace(/\/$/, "")
+  : null;
 
 const YAHOO_HEADERS = {
   "User-Agent":
@@ -197,6 +59,72 @@ const YAHOO_HEADERS = {
   Accept: "application/json, text/plain, */*",
   Referer: "https://search.yahoo.co.jp/realtime/search",
 } as const;
+
+/** 直接取得が連続で失敗したら、しばらく試さずリレー優先にする */
+const DIRECT_FAIL_STREAK_LIMIT = 3;
+const DIRECT_SKIP_MS = 5 * 60 * 1000;
+let directFailStreak = 0;
+let directSkippedUntil = 0;
+
+function noteDirectFailure(): void {
+  directFailStreak += 1;
+  if (directFailStreak >= DIRECT_FAIL_STREAK_LIMIT) {
+    directSkippedUntil = Date.now() + DIRECT_SKIP_MS;
+  }
+}
+
+async function yahooFetch(pathAndQuery: string): Promise<Response> {
+  const canDirect = !YAHOO_RELAY_BASE || Date.now() >= directSkippedUntil;
+  let lastRes: Response | null = null;
+  let lastError: unknown = null;
+
+  if (canDirect) {
+    try {
+      const res = await fetch(`${YAHOO_DIRECT_BASE}${pathAndQuery}`, {
+        headers: YAHOO_HEADERS,
+        cache: "no-store",
+        signal: AbortSignal.timeout(10000),
+      });
+      if (res.ok) {
+        directFailStreak = 0;
+        return res;
+      }
+      lastRes = res;
+      noteDirectFailure();
+    } catch (e) {
+      lastError = e;
+      noteDirectFailure();
+    }
+  }
+
+  if (YAHOO_RELAY_BASE) {
+    try {
+      const res = await fetch(`${YAHOO_RELAY_BASE}${pathAndQuery}`, {
+        headers: YAHOO_HEADERS,
+        cache: "no-store",
+        signal: AbortSignal.timeout(15000),
+      });
+      if (res.ok) return res;
+      lastRes = lastRes ?? res;
+    } catch (e) {
+      lastError = lastError ?? e;
+    }
+  }
+
+  // 非 OK レスポンスは呼び出し側で HTTP ステータスを握って判断する
+  if (lastRes) return lastRes;
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Yahoo API unreachable");
+}
+
+export const RESULTS_PER_PAGE = 40;
+export const MAX_START_PAGES = 100;
+const PARALLEL_CHUNK = 20;
+/** 1 ページの取得リトライ回数（指数バックオフ） */
+const PAGE_RETRY_ATTEMPTS = 2;
+/** 1 回のスイープで許容する恒久失敗ページ数。超えたらエラーにする */
+const MAX_FAILED_PAGES = 2;
 
 export function normalizeScreenName(raw: string): string {
   return raw.trim().replace(/^@+/, "");
@@ -219,6 +147,10 @@ function buildSearchParams(
   return q;
 }
 
+type PageResult =
+  | { ok: true; data: YahooPaginationResponse }
+  | { ok: false; error: unknown };
+
 async function fetchPaginationJson(
   p: string,
   opts: {
@@ -226,44 +158,115 @@ async function fetchPaginationJson(
     oldestTweetId?: string;
     md?: string;
   },
-): Promise<YahooPaginationResponse> {
-  const res = await yahooFetch(`/pagination?${buildSearchParams(p, opts)}`);
-  if (!res.ok) {
-    throw new Error(`Yahoo API HTTP ${res.status}`);
+): Promise<PageResult> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= PAGE_RETRY_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      await new Promise((r) => setTimeout(r, 250 * attempt * attempt));
+    }
+    try {
+      const res = await yahooFetch(`/pagination?${buildSearchParams(p, opts)}`);
+      if (!res.ok) {
+        throw new Error(`Yahoo API HTTP ${res.status}`);
+      }
+      return { ok: true, data: (await res.json()) as YahooPaginationResponse };
+    } catch (e) {
+      lastError = e;
+    }
   }
-  return res.json() as Promise<YahooPaginationResponse>;
+  return { ok: false, error: lastError };
 }
 
 export function getEntries(data: YahooPaginationResponse): YahooRealtimeEntry[] {
   return data.timeline?.entry ?? [];
 }
 
-export async function fetchByStartParallel(
+function totalAvailable(data: YahooPaginationResponse): number {
+  return data.timeline?.head?.totalResultsAvailable ?? 0;
+}
+
+type SweepResult = {
+  entries: YahooRealtimeEntry[];
+  /** インデックスに存在する全件を取り切った（末尾の短いページに到達した） */
+  complete: boolean;
+  /** 恒久失敗したページ数（0〜MAX_FAILED_PAGES） */
+  failedPages: number;
+};
+
+/**
+ * start パラメータによる並列ページ取得。
+ *
+ * - 1 ページ目で総件数(totalResultsAvailable)を読み、必要ページ数だけを取得する
+ * - 途中のページが 40 件未満になった時点で「インデックスの末尾」と判断して打ち切る
+ * - 例: メンション 1,760 件のユーザー → 100 ページ固定だったものを約 46 リクエストに削減
+ * - 例: メンション 65 件のユーザー → 4 リクエスト（従来 100 固定）
+ */
+export async function fetchByStartAdaptive(
   p: string,
   options: { md?: string; maxPages?: number } = {},
-): Promise<YahooRealtimeEntry[]> {
-  const maxPages = options.maxPages ?? MAX_START_PARALLEL_PAGES;
-  const starts = Array.from(
-    { length: maxPages },
-    (_, i) => i * RESULTS_PER_PAGE + 1,
-  );
-
-  const flat: YahooRealtimeEntry[][] = [];
-  for (let i = 0; i < starts.length; i += YAHOO_PARALLEL_CHUNK) {
-    const chunk = starts.slice(i, i + YAHOO_PARALLEL_CHUNK);
-    const part = await Promise.all(
-      chunk.map((start) =>
-        fetchPaginationJson(p, { start, md: options.md }).then(getEntries),
-      ),
-    );
-    flat.push(...part);
-  }
-
+): Promise<SweepResult> {
+  const maxPages = options.maxPages ?? MAX_START_PAGES;
   const byId = new Map<string, YahooRealtimeEntry>();
-  for (const entry of flat.flat()) {
-    if (entry?.id && !byId.has(entry.id)) byId.set(entry.id, entry);
+  let failedPages = 0;
+
+  const push = (list: YahooRealtimeEntry[]) => {
+    for (const e of list) {
+      if (e?.id && !byId.has(e.id)) byId.set(e.id, e);
+    }
+  };
+
+  // 1 ページ目（総件数の取得と、小さいアカウントの即終了を兼ねる）
+  const first = await fetchPaginationJson(p, { start: 1, md: options.md });
+  if (!first.ok) throw first.error instanceof Error ? first.error : new Error("Yahoo API error");
+  const firstEntries = getEntries(first.data);
+  push(firstEntries);
+  let total = totalAvailable(first.data);
+  if (firstEntries.length < RESULTS_PER_PAGE) {
+    return { entries: [...byId.values()], complete: true, failedPages: 0 };
   }
-  return [...byId.values()];
+
+  let done = 1;
+  let complete = false;
+
+  while (done < maxPages) {
+    // 総件数から必要ページ数を見積もる（+2 は取得中に増える分のマージン）
+    const plan = Math.min(
+      maxPages,
+      Math.max(done + 1, Math.ceil(total / RESULTS_PER_PAGE) + 2),
+    );
+    const size = Math.min(PARALLEL_CHUNK, plan - done);
+    const starts = Array.from({ length: size }, (_, i) => (done + i) * RESULTS_PER_PAGE + 1);
+
+    const results = await Promise.all(
+      starts.map((start) => fetchPaginationJson(p, { start, md: options.md })),
+    );
+
+    for (const r of results) {
+      if (!r.ok) {
+        failedPages += 1;
+        continue;
+      }
+      const es = getEntries(r.data);
+      push(es);
+      total = Math.max(total, totalAvailable(r.data));
+      if (es.length < RESULTS_PER_PAGE) complete = true;
+    }
+
+    if (failedPages > MAX_FAILED_PAGES) {
+      const failed = results.find(
+        (r): r is Extract<PageResult, { ok: false }> => !r.ok,
+      );
+      throw failed?.error instanceof Error
+        ? failed.error
+        : new Error("Yahoo API error");
+    }
+
+    done += size;
+    if (complete) break;
+  }
+
+  // 全ページを取り切ったか、末尾が未確認のまま100ページ上限に達したか
+  return { entries: [...byId.values()], complete, failedPages };
 }
 
 export function isOutgoingMentionTweet(
@@ -279,7 +282,7 @@ export async function fetchMentionsToYou(
   const name = normalizeScreenName(screenName);
   if (!name) throw new Error("screenName が空です。");
   const p = `@${name}`;
-  const entries = await fetchByStartParallel(p, {});
+  const { entries } = await fetchByStartAdaptive(p, {});
   return entries.slice(0, 10000);
 }
 
@@ -290,7 +293,7 @@ export async function fetchMentionsFromYou(
   if (!name) throw new Error("screenName が空です。");
   const p = `ID:${name}`;
 
-  const firstBatch = await fetchByStartParallel(p, {});
+  const sweep = await fetchByStartAdaptive(p, {});
   const collected: YahooRealtimeEntry[] = [];
   const seen = new Set<string>();
 
@@ -304,25 +307,29 @@ export async function fetchMentionsFromYou(
     }
   };
 
-  pushFiltered(firstBatch);
-  if (collected.length >= 10000) {
+  pushFiltered(sweep.entries);
+
+  // 100 ページ（4,000 件）を全部使い切ったときだけ、カーソルでさらに奥を取る。
+  // 通常のユーザーは適応スイープの時点で末尾に到達しているため、カーソルは回さない。
+  if (sweep.complete || collected.length >= 10000) {
     return collected.slice(0, 10000);
   }
 
-  let cursor = oldestTweetIdInBatch(firstBatch);
+  let cursor = oldestTweetIdInBatch(sweep.entries);
 
   let guard = 0;
   const maxCursorPages = 500;
 
   while (collected.length < 10000 && cursor && guard < maxCursorPages) {
     guard += 1;
-    const data = await fetchPaginationJson(p, { oldestTweetId: cursor });
-    const page = getEntries(data);
+    const r = await fetchPaginationJson(p, { oldestTweetId: cursor });
+    if (!r.ok) break;
+    const page = getEntries(r.data);
     if (page.length === 0) break;
 
     pushFiltered(page);
     const next =
-      data.timeline?.head?.oldestTweetId ??
+      r.data.timeline?.head?.oldestTweetId ??
       page.at(-1)?.id ??
       oldestTweetIdInBatch(page) ??
       null;
