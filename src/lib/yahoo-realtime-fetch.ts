@@ -43,15 +43,42 @@ export function pickSelfProfileImageFromYahoo(
 
 // ── 取得戦略 ────────────────────────────────────
 //
-// 直接（サーバーが国内にある前提）が最速かつ安定（実測 0.2〜0.4 秒 / 20 並列で 200）。
-// 失敗が続いたときだけ、任意のリレー（YAHOO_PROXY=https://... の Cloudflare Worker 等）に逃げる。
-// かつてのようなスクレイプ系プロキシプールは、疎通テストだけで毎回大量のリクエストを消費し
-// 遅く不安定だったため廃止した（2026-09）。
+// 優先順:
+//   1. 直接（サーバーが国内にある前提）が最速かつ安定（実測 0.2〜0.4 秒 / 20 並列で 200）
+//   2. YAHOO_HTTP_PROXY（http(s):// のプロキシ。VM100 の WARP 出口プロキシ等）
+//   3. YAHOO_PROXY（https:// のリレー。Cloudflare Worker 等）
+//
+// 1 が連続で失敗したらしばらく 2/3 を優先する。スクレイプ系プロキシプールは
+// 疎通テストだけで毎回大量のリクエストを消費し遅く不安定だったため廃止（2026-09）。
+// WARP 出口プロキシは Cloudflare Workers のエッジ IP が Yahoo にブロックされていても
+// 通りやすい（warp=on 実測）ため、リレーより先に試す。
+
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 
 const YAHOO_DIRECT_BASE = "https://search.yahoo.co.jp/realtime/api/v1";
 const YAHOO_RELAY_BASE = process.env.YAHOO_PROXY?.startsWith("https://")
   ? process.env.YAHOO_PROXY.replace(/\/$/, "")
   : null;
+/** 例: http://10.0.1.1:8888 (VM100 tinyproxy → Cloudflare WARP) */
+const YAHOO_HTTP_PROXY_URL = (() => {
+  const v = process.env.YAHOO_HTTP_PROXY?.trim();
+  return v && /^https?:\/\//i.test(v) ? v : null;
+})();
+
+let httpProxyFetch: typeof fetch | null = null;
+/** undici ProxyAgent 経由の fetch（初回のみ生成） */
+function getHttpProxyFetch(): typeof fetch | null {
+  if (!YAHOO_HTTP_PROXY_URL) return null;
+  if (!httpProxyFetch) {
+    const agent = new ProxyAgent({ uri: YAHOO_HTTP_PROXY_URL });
+    httpProxyFetch = ((input: string | URL, init?: RequestInit) =>
+      undiciFetch(input as Parameters<typeof undiciFetch>[0], {
+        ...(init as Parameters<typeof undiciFetch>[1]),
+        dispatcher: agent,
+      })) as unknown as typeof fetch;
+  }
+  return httpProxyFetch;
+}
 
 const YAHOO_HEADERS = {
   "User-Agent":
@@ -60,7 +87,7 @@ const YAHOO_HEADERS = {
   Referer: "https://search.yahoo.co.jp/realtime/search",
 } as const;
 
-/** 直接取得が連続で失敗したら、しばらく試さずリレー優先にする */
+/** 直接取得が連続で失敗したら、しばらく試さずフォールバック優先にする */
 const DIRECT_FAIL_STREAK_LIMIT = 3;
 const DIRECT_SKIP_MS = 5 * 60 * 1000;
 let directFailStreak = 0;
@@ -74,7 +101,8 @@ function noteDirectFailure(): void {
 }
 
 async function yahooFetch(pathAndQuery: string): Promise<Response> {
-  const canDirect = !YAHOO_RELAY_BASE || Date.now() >= directSkippedUntil;
+  const hasFallback = Boolean(YAHOO_HTTP_PROXY_URL || YAHOO_RELAY_BASE);
+  const canDirect = !hasFallback || Date.now() >= directSkippedUntil;
   let lastRes: Response | null = null;
   let lastError: unknown = null;
 
@@ -94,6 +122,21 @@ async function yahooFetch(pathAndQuery: string): Promise<Response> {
     } catch (e) {
       lastError = e;
       noteDirectFailure();
+    }
+  }
+
+  const proxyFetch = getHttpProxyFetch();
+  if (proxyFetch) {
+    try {
+      const res = await proxyFetch(`${YAHOO_DIRECT_BASE}${pathAndQuery}`, {
+        headers: YAHOO_HEADERS,
+        cache: "no-store",
+        signal: AbortSignal.timeout(15000),
+      } as RequestInit);
+      if (res.ok) return res;
+      lastRes = lastRes ?? res;
+    } catch (e) {
+      lastError = lastError ?? e;
     }
   }
 
