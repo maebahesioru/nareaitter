@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocale } from "@/components/LocaleProvider";
 import { layoutUsers } from "@/lib/layout-circle";
 import { proxiedImageSrc } from "@/lib/proxied-image-src";
+import { hexToDeadMask, spriteSliceSig } from "@/lib/sprite-sig";
 import type { CircleUser, SelfProfile } from "@/types/circle";
 
 type Props = {
@@ -393,14 +394,16 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
         drawImageCoverInSquare(ctx, selfImg, W / 2, W / 2, halfSelf);
       }
 
-      // ピア画像は「連続パイプライン」で読み込む:
-      // ・プレビューを最大 POOL 枚ぶん常時並列で取得（波ごとの全員待ちをやめて常に満員で流す）
-      // ・描画はスロット順を維持し、届いた順に順次描画
-      // POOL: 実測で16→48まで右肩上がり（VM100+トンネル経由で48でも劣化なし）。
-      // モバイルのメモリ/接続を考えて36に設定。
+      // ── 画像取得: スプライト方式 + 個別取得フォールバック ──
+      // スプライト: 約100セルを1枚のJPEGシートに合成したものを取得（≈10リクエストで全員ぶん）。
+      // 個別取得: スプライトの欠損セル・リビジョン不一致・失敗時だけ従来のパイプラインで補う。
       const POOL = 36;
       /** セルが小さいときは 48px のプレビューで十分なので HD は取得しない（通信削減） */
       const HD_UPGRADE_MIN_SIDE_PX = 36;
+      const SPRITE_CELL = 48;
+      const SPRITE_COLS = 10;
+      const SPRITE_CHUNK = 100;
+      const SPRITE_POOL = 4;
 
       let active = 0;
       const waiters: Array<() => void> = [];
@@ -417,17 +420,104 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
         }
       };
 
-      const previewJobs = slots.map((slot) =>
-        gate(() =>
-          loadImageFirstAvailable(
-            undefined,
-            slot.user.avatarUrlPreview,
-            slot.user.avatarUrl,
-          ),
-        ),
-      );
+      const total = slots.length;
+      const chunkCount = Math.ceil(total / SPRITE_CHUNK);
+      const createdBlobUrls: string[] = [];
+      blobRevokeRef.current = () => {
+        for (const u of createdBlobUrls) URL.revokeObjectURL(u);
+      };
 
-      // HD差し替えはプレビューより後に流す（拡張レイヤーなので後回し）
+      type SpriteHit = { img: HTMLImageElement; dead: boolean[] } | null;
+
+      let spriteActive = 0;
+      const spriteWaiters: Array<() => void> = [];
+      const spriteGate = async <T,>(fn: () => Promise<T>): Promise<T> => {
+        while (spriteActive >= SPRITE_POOL) {
+          await new Promise<void>((resolve) => spriteWaiters.push(resolve));
+        }
+        spriteActive += 1;
+        try {
+          return await fn();
+        } finally {
+          spriteActive -= 1;
+          spriteWaiters.shift()?.();
+        }
+      };
+
+      const loadSprite = async (
+        start: number,
+        count: number,
+        sig: string,
+      ): Promise<SpriteHit> => {
+        const url = `/api/avatar-sprite?screenName=${encodeURIComponent(
+          self.screenName,
+        )}&from=${start}&count=${count}&sig=${sig}`;
+        let res: Response;
+        try {
+          res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        } catch {
+          return null;
+        }
+        if (!res.ok) return null; // 409（リビジョン不一致）含む → 個別取得へ
+        const fromHdr = Number.parseInt(res.headers.get("X-Sprite-From") ?? "", 10);
+        const countHdr = Number.parseInt(res.headers.get("X-Sprite-Count") ?? "", 10);
+        const cellHdr = Number.parseInt(res.headers.get("X-Sprite-Cell") ?? "", 10);
+        const colsHdr = Number.parseInt(res.headers.get("X-Sprite-Cols") ?? "", 10);
+        if (
+          fromHdr !== start ||
+          countHdr !== count ||
+          cellHdr !== SPRITE_CELL ||
+          colsHdr !== SPRITE_COLS
+        ) {
+          return null;
+        }
+        const dead = hexToDeadMask(res.headers.get("X-Sprite-Dead") ?? "", count);
+        try {
+          const blob = await res.blob();
+          const objUrl = URL.createObjectURL(blob);
+          createdBlobUrls.push(objUrl);
+          const img = await loadImage(objUrl);
+          return { img, dead };
+        } catch {
+          return null;
+        }
+      };
+
+      const spriteJobs: Promise<SpriteHit>[] = [];
+      for (let start = 0; start < total; start += SPRITE_CHUNK) {
+        const end = Math.min(total, start + SPRITE_CHUNK);
+        const sig = spriteSliceSig(slots.slice(start, end).map((s) => s.user));
+        spriteJobs.push(spriteGate(() => loadSprite(start, end - start, sig)));
+      }
+
+      const spriteResolved: SpriteHit[] = new Array(chunkCount).fill(null);
+      const spriteDoneFlags: boolean[] = new Array(chunkCount).fill(false);
+      const perImageJobs: (Promise<HTMLImageElement | null> | null)[] =
+        new Array(total).fill(null);
+
+      const ensureChunk = async (c: number): Promise<void> => {
+        if (spriteDoneFlags[c]) return;
+        spriteDoneFlags[c] = true;
+        const hit = await spriteJobs[c];
+        spriteResolved[c] = hit;
+        const start = c * SPRITE_CHUNK;
+        const end = Math.min(total, start + SPRITE_CHUNK);
+        for (let k = start; k < end; k++) {
+          const covered = hit !== null && !hit.dead[k - start];
+          if (!covered) {
+            const slot = slots[k];
+            perImageJobs[k] = gate(() =>
+              loadImageFirstAvailable(
+                undefined,
+                slot.user.avatarUrlPreview,
+                slot.user.avatarUrl,
+              ),
+            );
+          }
+        }
+      };
+
+      // HD差し替えは従来どおり（拡張レイヤーなので後回し）
       const hdJobs: (Promise<HTMLImageElement | null> | null)[] = slots.map(
         (slot, i) => {
           const cell = peerCells[i];
@@ -450,15 +540,40 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
         },
       );
 
-      for (let i = 0; i < slots.length; i++) {
+      for (let i = 0; i < total; i++) {
         if (cancelled) return;
         const cell = peerCells[i];
         if (!cell) continue;
-        const img = await previewJobs[i];
+        const c = Math.floor(i / SPRITE_CHUNK);
+        await ensureChunk(c);
         if (cancelled) return;
         const half = peerHalfDraw(cell.cellW, cell.cellH);
-        if (img) {
-          drawImageCoverInSquare(ctx, img, cell.cx, cell.cy, half);
+        const hit = spriteResolved[c];
+        const within = i - c * SPRITE_CHUNK;
+        if (hit && !hit.dead[within]) {
+          // スプライトからセルを切り出して描画（サーバー側でcover済み）
+          const sx = (within % SPRITE_COLS) * SPRITE_CELL;
+          const sy = Math.floor(within / SPRITE_COLS) * SPRITE_CELL;
+          ctx.drawImage(
+            hit.img,
+            sx,
+            sy,
+            SPRITE_CELL,
+            SPRITE_CELL,
+            cell.cx - half,
+            cell.cy - half,
+            half * 2,
+            half * 2,
+          );
+        } else {
+          const job = perImageJobs[i];
+          if (job) {
+            const loaded = await job;
+            if (cancelled) return;
+            if (loaded) {
+              drawImageCoverInSquare(ctx, loaded, cell.cx, cell.cy, half);
+            }
+          }
         }
         const hdJob = hdJobs[i];
         if (hdJob) {
