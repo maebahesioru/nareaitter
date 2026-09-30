@@ -45,20 +45,15 @@ export function pickSelfProfileImageFromYahoo(
 //
 // 優先順:
 //   1. 直接（サーバーが国内にある前提）が最速かつ安定（実測 0.2〜0.4 秒 / 20 並列で 200）
-//   2. YAHOO_HTTP_PROXY（http(s):// のプロキシ。VM100 の WARP 出口プロキシ等）
-//   3. YAHOO_PROXY（https:// のリレー。Cloudflare Worker 等）
+//   2. YAHOO_HTTP_PROXY（http(s):// のプロキシ。VM100 の WARP 出口プロキシ）
 //
-// 1 が連続で失敗したらしばらく 2/3 を優先する。スクレイプ系プロキシプールは
-// 疎通テストだけで毎回大量のリクエストを消費し遅く不安定だったため廃止（2026-09）。
-// WARP 出口プロキシは Cloudflare Workers のエッジ IP が Yahoo にブロックされていても
-// 通りやすい（warp=on 実測）ため、リレーより先に試す。
+// 1 が連続で失敗したらしばらく 2 を優先する。スクレイプ系プロキシプールや
+// Cloudflare Worker リレーは 2026-09 に廃止（プールは疎通テストで大量リクエストを消費、
+// リレーは WARP で代替可能になったため）。
 
 import { ProxyAgent, fetch as undiciFetch } from "undici";
 
 const YAHOO_DIRECT_BASE = "https://search.yahoo.co.jp/realtime/api/v1";
-const YAHOO_RELAY_BASE = process.env.YAHOO_PROXY?.startsWith("https://")
-  ? process.env.YAHOO_PROXY.replace(/\/$/, "")
-  : null;
 /** 例: http://10.0.1.1:8888 (VM100 tinyproxy → Cloudflare WARP) */
 const YAHOO_HTTP_PROXY_URL = (() => {
   const v = process.env.YAHOO_HTTP_PROXY?.trim();
@@ -101,8 +96,8 @@ function noteDirectFailure(): void {
 }
 
 async function yahooFetch(pathAndQuery: string): Promise<Response> {
-  const hasFallback = Boolean(YAHOO_HTTP_PROXY_URL || YAHOO_RELAY_BASE);
-  const canDirect = !hasFallback || Date.now() >= directSkippedUntil;
+  const canDirect =
+    !YAHOO_HTTP_PROXY_URL || Date.now() >= directSkippedUntil;
   let lastRes: Response | null = null;
   let lastError: unknown = null;
 
@@ -133,20 +128,6 @@ async function yahooFetch(pathAndQuery: string): Promise<Response> {
         cache: "no-store",
         signal: AbortSignal.timeout(15000),
       } as RequestInit);
-      if (res.ok) return res;
-      lastRes = lastRes ?? res;
-    } catch (e) {
-      lastError = lastError ?? e;
-    }
-  }
-
-  if (YAHOO_RELAY_BASE) {
-    try {
-      const res = await fetch(`${YAHOO_RELAY_BASE}${pathAndQuery}`, {
-        headers: YAHOO_HEADERS,
-        cache: "no-store",
-        signal: AbortSignal.timeout(15000),
-      });
       if (res.ok) return res;
       lastRes = lastRes ?? res;
     } catch (e) {

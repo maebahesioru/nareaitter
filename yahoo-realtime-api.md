@@ -285,15 +285,14 @@ const nextCursor = data.timeline.head?.oldestTweetId ?? entries.at(-1)?.id ?? nu
 
 ## 取得の最適化（2026-09 実測メモ）
 
-### 取得の優先順（3段フォールバック）
+### 取得の優先順（2段フォールバック）
 1. **直接取得**（サーバーが国内にある前提）— 最速・安定（0.2〜0.4 秒 / 20 並列で 200）
 2. **`YAHOO_HTTP_PROXY`**（http(s):// プロキシ）— VM100 の WARP 出口プロキシ
-   （tinyproxy → Cloudflare WARP。Workers のエッジ IP がブロックされていても通りやすい）
-3. **`YAHOO_PROXY`**（https:// リレー）— Cloudflare Worker 等
+   （tinyproxy → Cloudflare WARP。`http://10.0.1.1:8888`）
 
-1 が連続 3 回失敗すると 5 分間は 2/3 を優先（サーキットブレーカー）。
-スクレイプ系プロキシプールは疎通テストだけで毎回大量のリクエストを食い、
-遅く不安定（本番で HTTP 500 多発）だったため廃止。
+1 が連続 3 回失敗すると 5 分間は 2 を優先（サーキットブレーカー）。
+スクレイプ系プロキシプール（疎通テストで大量リクエスト消費）と
+Cloudflare Worker リレーは 2026-09 に廃止した。
 
 ### 直接取得が最速
 国内サーバー → `search.yahoo.co.jp` の直接取得は **0.2〜0.4 秒 / 20 並列で全て 200**。
