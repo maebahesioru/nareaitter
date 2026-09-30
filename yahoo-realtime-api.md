@@ -299,7 +299,12 @@ Cloudflare Worker リレーは 2026-09 に廃止した。
   古いコピーを即返し裏で再構築（検証: `X-Nareai-Cache: fresh|swr|build`）
 - **画像404のネガティブキャッシュ**(1h) + Referer4連続試行の廃止
 - エッジキャッシュ: CFキャッシュルールで `/api/image-proxy*` と `/api/yahoo-mentions*` を Cache Everything
-- 実測: 1,034人サークル 初回201.7s→13.4s / 2回目以降22.4s→2.9〜3.4s
+- **スプライト方式**: アバター100枚を1枚のシート（480×480 JPEG）に合成し、画像取得を約1,000req→約10reqへ。
+  `GET /api/avatar-sprite?screenName=..&from=..&count=100&sig=<url列ハッシュ>`
+  - sig でリビジョン一致を保証（不一致は409→クライアントは個別取得にフォールバック）
+  - 欠損セルは `X-Sprite-Dead` ビットマスクで通知（プレビュー無し/404 は個別取得救済）
+  - 合成結果はオリジン(unstable_cache 1h)+CFエッジ(s-maxage 3600)の二段キャッシュ
+- 実測: 1,021人サークル 温時2.9s→**1.4〜1.9s** / デプロイ直後初回13s→**5.5s**（小アカ0.8s）
 
 ### 直接取得が最速
 国内サーバー → `search.yahoo.co.jp` の直接取得は **0.2〜0.4 秒 / 20 並列で全て 200**。
