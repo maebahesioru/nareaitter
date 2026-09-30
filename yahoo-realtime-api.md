@@ -294,6 +294,13 @@ const nextCursor = data.timeline.head?.oldestTweetId ?? entries.at(-1)?.id ?? nu
 スクレイプ系プロキシプール（疎通テストで大量リクエスト消費）と
 Cloudflare Worker リレーは 2026-09 に廃止した。
 
+### 応答速度の最適化（2026-09-30）
+- **メモリSWR層**: 期限切れ(5分)後の最初の1人が再構築3〜5秒を待つ構造を撤廃。
+  古いコピーを即返し裏で再構築（検証: `X-Nareai-Cache: fresh|swr|build`）
+- **画像404のネガティブキャッシュ**(1h) + Referer4連続試行の廃止
+- エッジキャッシュ: CFキャッシュルールで `/api/image-proxy*` と `/api/yahoo-mentions*` を Cache Everything
+- 実測: 1,034人サークル 初回201.7s→13.4s / 2回目以降22.4s→2.9〜3.4s
+
 ### 直接取得が最速
 国内サーバー → `search.yahoo.co.jp` の直接取得は **0.2〜0.4 秒 / 20 並列で全て 200**。
 スクレイプ系プロキシ（proxyscrape 等）は疎通テストだけで毎回大量のリクエストを食い、
