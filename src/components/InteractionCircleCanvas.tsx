@@ -69,8 +69,19 @@ async function loadImage(
             /* ignore */
           }
         }
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error("load"));
+        // ハングしたリクエストがパイプラインの枠を永久に占有しないようにする
+        const timer = window.setTimeout(() => {
+          img.src = "";
+          reject(new Error("timeout"));
+        }, 20000);
+        img.onload = () => {
+          window.clearTimeout(timer);
+          resolve(img);
+        };
+        img.onerror = () => {
+          window.clearTimeout(timer);
+          reject(new Error("load"));
+        };
         img.src = src;
       });
     } catch (e) {
@@ -382,53 +393,90 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
         drawImageCoverInSquare(ctx, selfImg, W / 2, W / 2, halfSelf);
       }
 
-      // ピアは並列でまとめて読み込み → 順番に描画
-      // （1枚ずつ逐次取得だと数百枚で待たされすぎるため 10 枚単位に）
-      const DRAW_CHUNK = 10;
+      // ピア画像は「連続パイプライン」で読み込む:
+      // ・プレビューを最大 POOL 枚ぶん常時並列で取得（波ごとの全員待ちをやめて常に満員で流す）
+      // ・描画はスロット順を維持し、届いた順に順次描画
+      const POOL = 24;
       /** セルが小さいときは 48px のプレビューで十分なので HD は取得しない（通信削減） */
       const HD_UPGRADE_MIN_SIDE_PX = 36;
-      for (let i = 0; i < slots.length; i += DRAW_CHUNK) {
-        if (cancelled) return;
-        const chunk = slots.slice(i, i + DRAW_CHUNK);
-        const loaded = await Promise.all(
-          chunk.map(async (slot, j) => {
-            const cell = peerCells[i + j];
-            if (!cell) return null;
-            const img = await loadImageFirstAvailable(
-              undefined,
-              slot.user.avatarUrlPreview,
-              slot.user.avatarUrl,
-            );
-            if (!img) return null;
-            let hd: HTMLImageElement | null = null;
-            const side = Math.min(cell.cellW, cell.cellH);
-            if (
-              side >= HD_UPGRADE_MIN_SIDE_PX &&
-              shouldUpgrade(slot.user.avatarUrlPreview, slot.user.avatarUrl)
-            ) {
-              try {
-                hd = await loadImage(slot.user.avatarUrl!.trim());
-              } catch {
-                /* skip */
-              }
-            }
-            return { cell, img, hd };
-          }),
-        );
-        if (cancelled) return;
-        for (const it of loaded) {
-          if (!it) continue;
-          const half = peerHalfDraw(it.cell.cellW, it.cell.cellH);
-          drawImageCoverInSquare(ctx, it.img, it.cell.cx, it.cell.cy, half);
-          if (it.hd) {
-            drawImageCoverInSquare(ctx, it.hd, it.cell.cx, it.cell.cy, half);
+
+      let active = 0;
+      const waiters: Array<() => void> = [];
+      const gate = async <T,>(fn: () => Promise<T>): Promise<T> => {
+        while (active >= POOL) {
+          await new Promise<void>((resolve) => waiters.push(resolve));
+        }
+        active += 1;
+        try {
+          return await fn();
+        } finally {
+          active -= 1;
+          waiters.shift()?.();
+        }
+      };
+
+      const previewJobs = slots.map((slot) =>
+        gate(() =>
+          loadImageFirstAvailable(
+            undefined,
+            slot.user.avatarUrlPreview,
+            slot.user.avatarUrl,
+          ),
+        ),
+      );
+
+      // HD差し替えはプレビューより後に流す（拡張レイヤーなので後回し）
+      const hdJobs: (Promise<HTMLImageElement | null> | null)[] = slots.map(
+        (slot, i) => {
+          const cell = peerCells[i];
+          if (!cell) return null;
+          const side = Math.min(cell.cellW, cell.cellH);
+          if (
+            side < HD_UPGRADE_MIN_SIDE_PX ||
+            !shouldUpgrade(slot.user.avatarUrlPreview, slot.user.avatarUrl)
+          ) {
+            return null;
           }
+          const hdUrl = slot.user.avatarUrl!.trim();
+          return gate(async () => {
+            try {
+              return await loadImage(hdUrl);
+            } catch {
+              return null;
+            }
+          });
+        },
+      );
+
+      for (let i = 0; i < slots.length; i++) {
+        if (cancelled) return;
+        const cell = peerCells[i];
+        if (!cell) continue;
+        const img = await previewJobs[i];
+        if (cancelled) return;
+        const half = peerHalfDraw(cell.cellW, cell.cellH);
+        if (img) {
+          drawImageCoverInSquare(ctx, img, cell.cx, cell.cy, half);
+        }
+        const hdJob = hdJobs[i];
+        if (hdJob) {
+          void hdJob.then((hd) => {
+            if (!cancelled && hd) {
+              drawImageCoverInSquare(ctx, hd, cell.cx, cell.cy, half);
+            }
+          });
         }
         // 自分を最前面に再描画
         if (selfImg && self.screenName) {
           drawImageCoverInSquare(ctx, selfImg, W / 2, W / 2, halfSelf);
         }
       }
+
+      // HD差し替えの完了を待ってからキャプチャ可能にする（保存画質を保証）
+      await Promise.all(
+        hdJobs.filter((p): p is Promise<HTMLImageElement | null> => p !== null),
+      );
+      if (cancelled) return;
 
       // HD版の自分アイコン
       if (!cancelled && self.screenName && shouldUpgrade(self.avatarUrlPreview, self.avatarUrl)) {
