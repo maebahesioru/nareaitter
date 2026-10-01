@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { unstable_cache } from "next/cache";
 import sharp, { type OverlayOptions } from "sharp";
 import { fetchProxiedImageUpstream } from "@/lib/image-proxy-upstream";
+import { resolveCircleAvatarUrl } from "@/lib/x-profile-image";
 import { deadMaskToHex, spriteCellUrl, spriteSliceSig } from "@/lib/sprite-sig";
 import {
   findCircleUsersForSig,
@@ -21,6 +22,7 @@ const MAX_CELLS = 120;
 const UPSTREAM_CONCURRENCY = 32;
 
 type CircleUserLite = {
+  screenName?: string | null;
   avatarUrlPreview?: string | null;
   avatarUrl?: string | null;
 };
@@ -99,10 +101,10 @@ export async function GET(req: NextRequest) {
       const dead: boolean[] = new Array(slice.length).fill(false);
       const composites: OverlayOptions[] = [];
 
-      const composeCell = async (u: CircleUserLite, i: number): Promise<void> => {
+      const drawCell = async (url: string, i: number): Promise<boolean> => {
+        if (!url.trim()) return false;
         try {
-          const raw = spriteCellUrl(u);
-          const { arrayBuffer } = await fetchProxiedImageUpstream(raw);
+          const { arrayBuffer } = await fetchProxiedImageUpstream(url);
           const cellBuf = await sharp(Buffer.from(arrayBuffer))
             .resize(CELL, CELL, { fit: "cover" })
             .jpeg({ quality: 82 })
@@ -112,17 +114,36 @@ export async function GET(req: NextRequest) {
             left: (i % COLS) * CELL,
             top: Math.floor(i / COLS) * CELL,
           });
-          dead[i] = false;
+          return true;
         } catch {
-          dead[i] = true;
+          return false;
         }
       };
 
-      await mapLimit(slice, UPSTREAM_CONCURRENCY, async (u, i) => {
-        if (!spriteCellUrl(u)) {
-          dead[i] = true;
+      /**
+       * 1 セルを描く。
+       * - まずペイロードの URL（プレビュー優先）で描画
+       * - 失敗したら fx/vx で現行アバターを救済（Yahoo プレビュー URL は期限切れが多く、
+       *   壊れた同一 URL を多数ユーザーが共有することがある。実測 2026-10-01）
+       */
+      const composeCell = async (u: CircleUserLite, i: number): Promise<void> => {
+        const raw = spriteCellUrl(u);
+        if (await drawCell(raw, i)) {
+          dead[i] = false;
           return;
         }
+        const screen = (u.screenName ?? "").trim();
+        if (screen) {
+          const alt = await resolveCircleAvatarUrl(screen);
+          if (alt && (await drawCell(alt, i))) {
+            dead[i] = false;
+            return;
+          }
+        }
+        dead[i] = true;
+      };
+
+      await mapLimit(slice, UPSTREAM_CONCURRENCY, async (u, i) => {
         await composeCell(u, i);
       });
 
@@ -130,9 +151,7 @@ export async function GET(req: NextRequest) {
       // 初回は DNS/接続がコールドだと一部セルが一時失敗し、それが dead マスクに
       // 焼き込まれると URL が生きていてもクライアントが再取得しない（実測: 20%欠け）。
       // 同じ合成を即時にもう一度だけ走らせる（成功すれば dead を解除）。
-      const failed = slice
-        .map((_, i) => i)
-        .filter((i) => dead[i] && Boolean(spriteCellUrl(slice[i])));
+      const failed = slice.map((_, i) => i).filter((i) => dead[i]);
       if (failed.length > 0) {
         await mapLimit(failed, UPSTREAM_CONCURRENCY, async (i) => {
           await composeCell(slice[i], i);
