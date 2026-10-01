@@ -157,7 +157,7 @@ function calcLayout(tree: ReturnType<typeof buildFamilyTree>, w: number, locale:
   for (const r of rowsSpec) maxUnits = Math.max(maxUnits, unitsOf(r.items) + (r.items.length - 1) * 0.85 + 0.4);
   const r = Math.max(13, Math.min(27, (w - M * 2) / maxUnits));
   const gap = r * 0.85;
-  const coupleGap = r * 0.75;
+  const coupleGap = r * 1.05;
   const nameFs = Math.max(8, Math.min(11, r * 0.42));
   const rowStep = r * 2 + nameFs + r * 2.2;
 
@@ -352,6 +352,7 @@ export function FamilyTreeCanvas({ self, users }: Props) {
       const lc = isDark ? "#52525b" : "#94a3b8";
       const bc = isDark ? "#52525b" : "#cbd5e1";
       const rootRing = isDark ? "#a1a1aa" : "#71717a";
+      const mlc = isDark ? "#8b8b95" : "#64748b";
 
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, W, H);
@@ -383,17 +384,21 @@ export function FamilyTreeCanvas({ self, users }: Props) {
       }
       // 婚姻線（夫婦の二重線）
       for (const row of layout.rows) {
-        ctx.lineWidth = 2.6;
-        ctx.globalAlpha = 0.95;
+        ctx.strokeStyle = mlc;
+        ctx.fillStyle = mlc;
+        ctx.lineWidth = 3;
+        ctx.globalAlpha = 1;
         for (const cp of row.couples) {
           ctx.beginPath();
           ctx.moveTo(cp.x1, cp.y);
           ctx.lineTo(cp.x2, cp.y);
           ctx.stroke();
           ctx.beginPath();
-          ctx.arc((cp.x1 + cp.x2) / 2, cp.y, 2.4, 0, Math.PI * 2);
+          ctx.arc((cp.x1 + cp.x2) / 2, cp.y, 2.6, 0, Math.PI * 2);
           ctx.fill();
         }
+        ctx.strokeStyle = lc;
+        ctx.fillStyle = lc;
         ctx.lineWidth = 1.4;
         ctx.globalAlpha = 0.6;
       }
