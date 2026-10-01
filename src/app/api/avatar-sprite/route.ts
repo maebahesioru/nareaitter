@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { unstable_cache } from "next/cache";
 import sharp, { type OverlayOptions } from "sharp";
-import { fetchProxiedImageUpstream } from "@/lib/image-proxy-upstream";
+import { fetchProxiedImageUpstream, UpstreamImageError } from "@/lib/image-proxy-upstream";
 import { resolveCircleAvatarUrl } from "@/lib/x-profile-image";
 import { deadMaskToHex, spriteCellUrl, spriteSliceSig } from "@/lib/sprite-sig";
 import {
@@ -101,8 +101,10 @@ export async function GET(req: NextRequest) {
       const dead: boolean[] = new Array(slice.length).fill(false);
       const composites: OverlayOptions[] = [];
 
-      const drawCell = async (url: string, i: number): Promise<boolean> => {
-        if (!url.trim()) return false;
+      type DrawResult = { ok: true } | { ok: false; permanent: boolean };
+
+      const drawCell = async (url: string, i: number): Promise<DrawResult> => {
+        if (!url.trim()) return { ok: false, permanent: true };
         try {
           const { arrayBuffer } = await fetchProxiedImageUpstream(url);
           const cellBuf = await sharp(Buffer.from(arrayBuffer))
@@ -114,28 +116,33 @@ export async function GET(req: NextRequest) {
             left: (i % COLS) * CELL,
             top: Math.floor(i / COLS) * CELL,
           });
-          return true;
-        } catch {
-          return false;
+          return { ok: true };
+        } catch (e) {
+          const status = e instanceof UpstreamImageError ? e.status : 0;
+          return { ok: false, permanent: status === 404 || status === 410 };
         }
       };
 
       /**
        * 1 セルを描く。
        * - まずペイロードの URL（プレビュー優先）で描画
-       * - 失敗したら fx/vx で現行アバターを救済（Yahoo プレビュー URL は期限切れが多く、
-       *   壊れた同一 URL を多数ユーザーが共有することがある。実測 2026-10-01）
+       * - 404系（期限切れの Yahoo プレビュー等）だけ fx/vx で現行アバターを救済。
+       *   ⚠️ 一時失敗（timeout）で fx を撃つと、内蔵リトライのラダー（最長36秒/人）が
+       *   合成全体を数十秒に伸ばし、クライアントの15秒タイムアウト→個別取得フォールバック
+       *   を誘発して多重合成の悪循環になる（実測 2026-10-01）。一時失敗は2周目リトライのみ。
        */
       const composeCell = async (u: CircleUserLite, i: number): Promise<void> => {
         const raw = spriteCellUrl(u);
-        if (await drawCell(raw, i)) {
+        const first = await drawCell(raw, i);
+        if (first.ok) {
           dead[i] = false;
           return;
         }
         const screen = (u.screenName ?? "").trim();
-        if (screen) {
+        const permanent = first.permanent || !raw.trim();
+        if (permanent && screen) {
           const alt = await resolveCircleAvatarUrl(screen);
-          if (alt && (await drawCell(alt, i))) {
+          if (alt && (await drawCell(alt, i)).ok) {
             dead[i] = false;
             return;
           }
