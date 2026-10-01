@@ -124,6 +124,26 @@ export async function yahooAggregatesToCircleUsers(
       };
     },
   );
+
+  // 失敗救済の2周目:
+  // 初回は DNS がコールド（コンテナ再起動直後は埋め込みDNSが数秒詰まることがある）ため、
+  // 一斉取得時に一部のアバターが一時失敗で欠ける。DNS が温まった後に一度だけ取り直す。
+  const missing: number[] = [];
+  list.forEach((u, i) => {
+    if (!u.avatarUrl?.trim() && !u.avatarUrlPreview?.trim()) missing.push(i);
+  });
+  if (missing.length > 0) {
+    await mapWithConcurrency(
+      missing,
+      AVATAR_FETCH_CONCURRENCY,
+      async (i) => {
+        const hdRaw = await resolveCircleAvatarUrl(rows[i].screen);
+        const hd = hdRaw?.trim();
+        if (hd) list[i] = { ...list[i], avatarUrl: hd };
+      },
+    );
+  }
+
   return list.filter((u) =>
     Boolean(u.avatarUrl?.trim() || u.avatarUrlPreview?.trim()),
   );
