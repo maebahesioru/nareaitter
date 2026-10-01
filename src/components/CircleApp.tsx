@@ -40,7 +40,13 @@ const AccountValuePanel = dynamic(
   { ssr: false },
 );
 
-type ViewMode = "circle" | "family" | "ai" | "value";
+const InteractionTable = dynamic(
+  () =>
+    import("./InteractionTable").then((m) => ({ default: m.InteractionTable })),
+  { ssr: false },
+);
+
+type ViewMode = "circle" | "table" | "family" | "ai" | "value";
 
 type YahooMentionsResponse = {
   screenName: string;
@@ -283,7 +289,7 @@ export function CircleApp(props: CircleAppProps = {}) {
         className="overflow-visible rounded-2xl border border-zinc-200/80 bg-zinc-50 p-4 dark:border-white/10 dark:bg-[#09090b] sm:p-6"
       >
         {self.screenName && users.length > 0 && (
-          <div className="mb-4 flex justify-center gap-2">
+          <div className="mb-4 flex flex-wrap justify-center gap-2">
             <button
               type="button"
               onClick={() => setViewMode("circle")}
@@ -294,6 +300,17 @@ export function CircleApp(props: CircleAppProps = {}) {
               }`}
             >
               {t.tabCircle}
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("table")}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                viewMode === "table"
+                  ? "bg-emerald-600 text-white shadow"
+                  : "bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+              }`}
+            >
+              {t.tabTable}
             </button>
             <button
               type="button"
@@ -334,7 +351,15 @@ export function CircleApp(props: CircleAppProps = {}) {
           <>
             <p className="mb-3 text-center text-base font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
               @{self.screenName}
-              {viewMode === "circle" ? t.tableTitle : viewMode === "family" ? t.familyTitle : viewMode === "ai" ? t.aiTitle : t.valueTitle}
+              {viewMode === "circle"
+                ? t.tableTitle
+                : viewMode === "table"
+                  ? t.tableDetailTitle
+                  : viewMode === "family"
+                    ? t.familyTitle
+                    : viewMode === "ai"
+                      ? t.aiTitle
+                      : t.valueTitle}
             </p>
             {viewMode === "circle" ? (
               <>
@@ -343,6 +368,8 @@ export function CircleApp(props: CircleAppProps = {}) {
                   {t.tableHint}
                 </p>
               </>
+            ) : viewMode === "table" ? (
+              <InteractionTable users={users} />
             ) : viewMode === "family" ? (
               <>
                 <FamilyTreeCanvas self={self} users={users} />

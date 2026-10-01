@@ -1,4 +1,5 @@
 import type { CircleUser } from "@/types/circle";
+import type { MentionPeerAgg } from "@/lib/yahoo-realtime-fetch";
 import { resolveCircleAvatarUrl } from "@/lib/x-profile-image";
 
 /** 無制限並列だと FixTweet 系 API が 429 になり再試行で遅延が積む（実測: 28並列までは429なし・63req/s） */
@@ -49,8 +50,8 @@ async function mapWithConcurrency<T, R>(
  * Yahoo profileImage を avatarUrlPreview、fxtwitter/vxtwitter を avatarUrl に入れる（canvas が仮→高画質）。
  */
 export async function yahooAggregatesToCircleUsers(
-  authorsToYou: Record<string, number>,
-  targetsFromYou: Record<string, number>,
+  authorsToYou: Record<string, MentionPeerAgg>,
+  targetsFromYou: Record<string, MentionPeerAgg>,
   selfScreenName: string,
   yahooPeerProfileByScreen: Record<string, string>,
 ): Promise<CircleUser[]> {
@@ -60,11 +61,28 @@ export async function yahooAggregatesToCircleUsers(
     ...Object.keys(targetsFromYou),
   ]);
 
-  const rows: { screen: string; n: number }[] = [];
+  const rows: {
+    screen: string;
+    n: number;
+    received: number;
+    sent: number;
+    last: number;
+  }[] = [];
   for (const k of keys) {
     if (k.toLowerCase() === self) continue;
-    const n = (authorsToYou[k] ?? 0) + (targetsFromYou[k] ?? 0);
-    if (n > 0) rows.push({ screen: k, n });
+    const a = authorsToYou[k];
+    const b = targetsFromYou[k];
+    const received = a?.n ?? 0;
+    const sent = b?.n ?? 0;
+    const n = received + sent;
+    if (n > 0)
+      rows.push({
+        screen: k,
+        n,
+        received,
+        sent,
+        last: Math.max(a?.last ?? 0, b?.last ?? 0),
+      });
   }
 
   rows.sort((a, b) => b.n - a.n);
@@ -99,6 +117,10 @@ export async function yahooAggregatesToCircleUsers(
         avatarUrl,
         interactionScore: Math.max(1, Math.round((r.n / max) * 100)),
         interactionCount: r.n,
+        mentionsReceived: r.received,
+        mentionsSent: r.sent,
+        lastInteractionAt:
+          r.last > 0 ? new Date(r.last * 1000).toISOString() : undefined,
       };
     },
   );

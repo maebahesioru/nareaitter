@@ -51,9 +51,21 @@ export type Messages = {
   errEnterName: string;
   errFetch: string;
   tabCircle: string;
+  tabTable: string;
   tabFamily: string;
   tabAI: string;
   tabValue: string;
+  tableDetailTitle: string;
+  tableColRank: string;
+  tableColUser: string;
+  tableColTotal: string;
+  tableColReceived: string;
+  tableColSent: string;
+  tableColLast: string;
+  tableFilterPlaceholder: string;
+  tableShownLabel: string;
+  tableNoMatch: string;
+  tableSortHint: string;
   aiTitle: string;
   valueTitle: string;
   familyTitle: string;
@@ -135,9 +147,22 @@ export const messages: Record<Locale, Messages> = {
     errEnterName: "X のユーザー名（例: nhk_news）を入力してください。",
     errFetch: "取得に失敗しました。",
     tabCircle: "サークル",
+    tabTable: "交流一覧",
     tabFamily: "家族ツリー",
     tabAI: "AI診断",
     tabValue: "売却価格",
+    tableDetailTitle: "の交流一覧",
+    tableColRank: "順位",
+    tableColUser: "ユーザー",
+    tableColTotal: "合計",
+    tableColReceived: "相手→あなた",
+    tableColSent: "あなた→相手",
+    tableColLast: "最終交流",
+    tableFilterPlaceholder: "ユーザー名で絞り込み",
+    tableShownLabel: "表示",
+    tableNoMatch: "該当するユーザーがいません",
+    tableSortHint:
+      "見出しをクリックすると並べ替えできます。回数は過去30日分の公開データ（あなた宛て／あなたからの合算）です。",
     aiTitle: "のAI診断",
     valueTitle: "のアカウント推定売却価格",
     familyTitle: "の家族ツリー",
@@ -217,11 +242,24 @@ export const messages: Record<Locale, Messages> = {
     errEnterName: "Enter an X username (e.g. nhk_news).",
     errFetch: "Failed to load data.",
     tabCircle: "Circle",
+    tabTable: "Interactions",
     tabFamily: "Family Tree",
     tabAI: "AI Diagnosis",
     aiTitle: "'s AI Diagnosis",
     tabValue: "Value",
     valueTitle: "'s Account Value Est.",
+    tableDetailTitle: "'s Interactions",
+    tableColRank: "Rank",
+    tableColUser: "User",
+    tableColTotal: "Total",
+    tableColReceived: "They→You",
+    tableColSent: "You→They",
+    tableColLast: "Last seen",
+    tableFilterPlaceholder: "Filter by username",
+    tableShownLabel: "Shown",
+    tableNoMatch: "No matching users",
+    tableSortHint:
+      "Click a column header to sort. Counts combine mentions in both directions from the last 30 days of public data.",
     familyTitle: "'s Family Tree",
     familyHint:
       "Predicts 'family' relationships on Twitter based on mention patterns. Results are approximate.",

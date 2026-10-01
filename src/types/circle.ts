@@ -10,6 +10,12 @@ export type CircleUser = {
   interactionScore: number;
   /** 相手との馴れ合い回数（合算）。API から付くときはサイズ計算に使う */
   interactionCount?: number;
+  /** 内訳: 相手→あなたのメンション回数（表示期間内） */
+  mentionsReceived?: number;
+  /** 内訳: あなた→相手のメンション回数（表示期間内） */
+  mentionsSent?: number;
+  /** 最後にやりとりした日時（ISO 8601）。不明なら undefined */
+  lastInteractionAt?: string;
 };
 
 export type FamilyRelationType = "self" | "parent" | "spouse" | "child" | "sibling" | "relative";

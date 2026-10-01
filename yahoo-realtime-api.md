@@ -294,6 +294,17 @@ const nextCursor = data.timeline.head?.oldestTweetId ?? entries.at(-1)?.id ?? nu
 スクレイプ系プロキシプール（疎通テストで大量リクエスト消費）と
 Cloudflare Worker リレーは 2026-09 に廃止した。
 
+### 交流一覧（詳細表）— 2026-10-01
+- `circleUsers[]` に内訳フィールドを追加: `mentionsReceived`（相手→あなた・件数）、
+  `mentionsSent`（あなた→相手・件数）、`lastInteractionAt`（最終交流日時・ISO 8601）。
+  合計 `interactionCount = mentionsReceived + mentionsSent` を全件で検証済み。
+- 集計は `aggregateMentionAuthors` / `aggregateMentionTargets` が `{n, last}`（last=epoch秒,
+  Yahoo の `createdAt` は秒）で返し、`yahooAggregatesToCircleUsers` が ISO に変換して載せる。
+- UI は「交流一覧」タブ（`InteractionTable.tsx`）: 見出しクリックで並べ替え（合計/受/送/最終）、
+  ユーザー名絞り込み、画像は loading=lazy。
+- キャッシュキーは `yahoo-mentions-v2`（ペイロード形状が変わったため。旧 v1 を引くと
+  フィールド欠落のキャッシュを配るので必ず上げる）。クライアント sessionStorage は v3。
+
 ### 応答速度の最適化（2026-09-30）
 - **DNSルックアップのメモリキャッシュ**（2026-10-01）: VM100のDocker埋め込みDNSが間欠的に
   1回 0.7〜3.6 秒かかり（平常40ms）、fetchが接続ごとにlookupするためコールドビルドが
