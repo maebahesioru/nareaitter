@@ -95,6 +95,19 @@ function noteDirectFailure(): void {
   }
 }
 
+/**
+ * フォールバック（WARP等）が失敗したら直ちに直優先へ戻す。
+ *
+ * 実測 2026-10-01: WARP 出口の IP が Yahoo から 500 を返される状態になり、
+ * 「直が3連続失敗→5分 WARP 固定」の間ずっと 500 を受け続けて全滅した。
+ * 焼けた出口に 5 分固定されないよう、フォールバック失敗で即座に解除する
+ * （直が本当に死んでいる場合は次の 3 連続失敗で再びフォールバックに乗る）。
+ */
+function noteProxyFailure(): void {
+  directFailStreak = 0;
+  directSkippedUntil = 0;
+}
+
 async function yahooFetch(pathAndQuery: string): Promise<Response> {
   const canDirect =
     !YAHOO_HTTP_PROXY_URL || Date.now() >= directSkippedUntil;
@@ -130,8 +143,10 @@ async function yahooFetch(pathAndQuery: string): Promise<Response> {
       } as RequestInit);
       if (res.ok) return res;
       lastRes = lastRes ?? res;
+      noteProxyFailure();
     } catch (e) {
       lastError = lastError ?? e;
+      noteProxyFailure();
     }
   }
 
