@@ -99,13 +99,9 @@ export async function GET(req: NextRequest) {
       const dead: boolean[] = new Array(slice.length).fill(false);
       const composites: OverlayOptions[] = [];
 
-      await mapLimit(slice, UPSTREAM_CONCURRENCY, async (u, i) => {
-        const raw = spriteCellUrl(u);
-        if (!raw) {
-          dead[i] = true;
-          return;
-        }
+      const composeCell = async (u: CircleUserLite, i: number): Promise<void> => {
         try {
+          const raw = spriteCellUrl(u);
           const { arrayBuffer } = await fetchProxiedImageUpstream(raw);
           const cellBuf = await sharp(Buffer.from(arrayBuffer))
             .resize(CELL, CELL, { fit: "cover" })
@@ -116,10 +112,32 @@ export async function GET(req: NextRequest) {
             left: (i % COLS) * CELL,
             top: Math.floor(i / COLS) * CELL,
           });
+          dead[i] = false;
         } catch {
           dead[i] = true;
         }
+      };
+
+      await mapLimit(slice, UPSTREAM_CONCURRENCY, async (u, i) => {
+        if (!spriteCellUrl(u)) {
+          dead[i] = true;
+          return;
+        }
+        await composeCell(u, i);
       });
+
+      // 一時失敗の救済2周目:
+      // 初回は DNS/接続がコールドだと一部セルが一時失敗し、それが dead マスクに
+      // 焼き込まれると URL が生きていてもクライアントが再取得しない（実測: 20%欠け）。
+      // 同じ合成を即時にもう一度だけ走らせる（成功すれば dead を解除）。
+      const failed = slice
+        .map((_, i) => i)
+        .filter((i) => dead[i] && Boolean(spriteCellUrl(slice[i])));
+      if (failed.length > 0) {
+        await mapLimit(failed, UPSTREAM_CONCURRENCY, async (i) => {
+          await composeCell(slice[i], i);
+        });
+      }
 
       const sprite = await sharp({
         create: {
@@ -135,8 +153,8 @@ export async function GET(req: NextRequest) {
 
       return { b64: sprite.toString("base64"), deadHex: deadMaskToHex(dead) };
     },
-    ["avatar-sprite-v1", name.toLowerCase(), String(from), String(count), sig],
-    { revalidate: 3600 },
+    ["avatar-sprite-v2", name.toLowerCase(), String(from), String(count), sig],
+    { revalidate: 900 },
   )();
 
   const sprite = Buffer.from(composed.b64, "base64");
@@ -144,7 +162,7 @@ export async function GET(req: NextRequest) {
   return new NextResponse(new Uint8Array(sprite), {
     headers: {
       "Content-Type": "image/jpeg",
-      "Cache-Control": "public, s-maxage=3600, max-age=3600",
+      "Cache-Control": "public, s-maxage=900, max-age=900",
       "X-Sprite-Sig": sig,
       "X-Sprite-Dead": composed.deadHex,
       "X-Sprite-Cell": String(CELL),

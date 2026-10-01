@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocale } from "@/components/LocaleProvider";
 import { layoutUsers } from "@/lib/layout-circle";
 import { proxiedImageSrc } from "@/lib/proxied-image-src";
-import { hexToDeadMask, spriteSliceSig } from "@/lib/sprite-sig";
+import { hexToDeadMask, SPRITE_REV, spriteSliceSig } from "@/lib/sprite-sig";
 import type { CircleUser, SelfProfile } from "@/types/circle";
 
 type Props = {
@@ -448,7 +448,7 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
       ): Promise<SpriteHit> => {
         const url = `/api/avatar-sprite?screenName=${encodeURIComponent(
           self.screenName,
-        )}&from=${start}&count=${count}&sig=${sig}`;
+        )}&from=${start}&count=${count}&sig=${sig}&rev=${SPRITE_REV}`;
         let res: Response;
         try {
           res = await fetch(url, { signal: AbortSignal.timeout(15000) });

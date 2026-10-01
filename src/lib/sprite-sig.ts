@@ -11,6 +11,13 @@
 
 type PreviewLike = { avatarUrlPreview?: string | null; avatarUrl?: string | null };
 
+/**
+ * スプライトURLのキャッシュ破棄用リビジョン。
+ * 合成ロジックを変えてエッジ/オリジンの古いシートを捨てたいときに +1 する
+ * （クライアントURLの rev パラメータとオリジンの unstable_cache キーの両方に入る）。
+ */
+export const SPRITE_REV = "2";
+
 /** セルに使うURL（プレビュー優先、無ければHD） */
 export function spriteCellUrl(user: PreviewLike): string {
   return (user.avatarUrlPreview ?? "").trim() || (user.avatarUrl ?? "").trim();
