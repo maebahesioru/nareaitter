@@ -3,6 +3,7 @@ import {
   aggregateMentionAuthors,
   aggregateMentionTargets,
   buildYahooAuthorProfileImageMap,
+  cleanSnippet,
   fetchMentionsBothParallel,
   pickSelfProfileImageFromYahoo,
 } from "@/lib/yahoo-realtime-fetch";
@@ -111,6 +112,13 @@ export async function buildYahooPayload(
 
   if (buildCircle) {
     const T1 = Date.now();
+    // 自分の最近の投稿（診断プロンプトの文脈用・最新8件）
+    const selfRecent = [...mentionsFromYou]
+      .sort((x, y) => (y.createdAt ?? 0) - (x.createdAt ?? 0))
+      .slice(0, 8)
+      .map((e) => cleanSnippet(e.displayText, 100))
+      .filter((t): t is string => Boolean(t));
+    if (selfRecent.length) payload.recentSelfTweets = selfRecent;
     const yahooPeerImages = buildYahooAuthorProfileImageMap(mentionsToYou);
     const selfYahoo = pickSelfProfileImageFromYahoo(mentionsFromYou);
     const [circleUsers, selfHd, profileData] = await Promise.all([
@@ -149,7 +157,7 @@ function getCachedYahooPayload(name: string, buildCircle: boolean) {
   return unstable_cache(
     () => buildYahooPayload(name, buildCircle),
     [
-      "yahoo-mentions-v3",
+      "yahoo-mentions-v4",
       name.toLowerCase(),
       buildCircle ? "circle" : "counts",
     ],

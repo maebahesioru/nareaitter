@@ -458,8 +458,15 @@ export async function fetchMentionsBothParallel(screenName: string): Promise<{
   return { mentionsToYou, mentionsFromYou };
 }
 
-/** 1 相手あたりの集計: メンション回数・最終交流時刻（epoch 秒）・表示名 */
-export type MentionPeerAgg = { n: number; last: number; name?: string };
+/** 空白・改行を潰し、文面スニペット用に短く切る */
+export function cleanSnippet(raw: string | undefined, max = 80): string | undefined {
+  const t = (raw ?? "").replace(/\s+/g, " ").trim();
+  if (!t) return undefined;
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
+/** 1 相手あたりの集計: 回数・最終交流（epoch 秒）・表示名・最新文面（診断の文脈用） */
+export type MentionPeerAgg = { n: number; last: number; name?: string; text?: string };
 
 export function aggregateMentionAuthors(
   mentionsToYou: YahooRealtimeEntry[],
@@ -469,13 +476,17 @@ export function aggregateMentionAuthors(
     const sn = (e.screenName ?? "unknown").toLowerCase();
     const t = typeof e.createdAt === "number" && e.createdAt > 0 ? e.createdAt : 0;
     const nm = (e.name ?? "").trim();
+    const txt = cleanSnippet(e.displayText);
     const cur = map[sn];
     if (cur) {
       cur.n += 1;
-      if (t > cur.last) cur.last = t;
+      if (t >= cur.last) {
+        cur.last = t;
+        if (txt) cur.text = txt;
+      }
       if (!cur.name && nm) cur.name = nm;
     } else {
-      map[sn] = { n: 1, last: t, name: nm || undefined };
+      map[sn] = { n: 1, last: t, name: nm || undefined, text: txt };
     }
   }
   return map;
@@ -489,6 +500,7 @@ export function aggregateMentionTargets(
   const map: Record<string, MentionPeerAgg> = {};
   for (const e of mentionsFromYou) {
     const t = typeof e.createdAt === "number" && e.createdAt > 0 ? e.createdAt : 0;
+    const ownTxt = cleanSnippet(e.displayText);
     for (const m of e.mentions ?? []) {
       const sn = (m.screenName ?? "").toLowerCase();
       if (!sn || sn === self) continue;
@@ -496,10 +508,13 @@ export function aggregateMentionTargets(
       const cur = map[sn];
       if (cur) {
         cur.n += 1;
-        if (t > cur.last) cur.last = t;
+        if (t >= cur.last) {
+          cur.last = t;
+          if (ownTxt) cur.text = ownTxt;
+        }
         if (!cur.name && nm) cur.name = nm;
       } else {
-        map[sn] = { n: 1, last: t, name: nm || undefined };
+        map[sn] = { n: 1, last: t, name: nm || undefined, text: ownTxt };
       }
     }
   }

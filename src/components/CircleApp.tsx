@@ -52,6 +52,7 @@ type YahooMentionsResponse = {
   screenName: string;
   counts: { mentionsToYou: number; mentionsFromYou: number };
   circleUsers?: CircleUser[];
+  recentSelfTweets?: string[];
   selfAvatarUrl?: string;
   selfAvatarUrlPreview?: string;
   profileFollowers?: number;
@@ -82,6 +83,7 @@ export function CircleApp(props: CircleAppProps = {}) {
   } | null>(null);
   const [maxUsers, setMaxUsers] = useState(9999);
   const [viewMode, setViewMode] = useState<ViewMode>("circle");
+  const [selfTweets, setSelfTweets] = useState<string[]>([]);
 
   const fetchYahooMentions = useCallback(async (overrideHandle?: string) => {
     const name = (overrideHandle ?? yahooHandle).trim().replace(/^@+/, "");
@@ -98,6 +100,7 @@ export function CircleApp(props: CircleAppProps = {}) {
         toYou: data.counts.mentionsToYou,
         fromYou: data.counts.mentionsFromYou,
       });
+      setSelfTweets(data.recentSelfTweets ?? []);
       const list = data.circleUsers ?? [];
       if (list.length === 0) {
         setError(t.noPeers);
@@ -150,6 +153,7 @@ export function CircleApp(props: CircleAppProps = {}) {
         screenName: data.screenName,
         counts: data.counts,
         circleUsers: data.circleUsers,
+        recentSelfTweets: data.recentSelfTweets,
         selfAvatarUrl: data.selfAvatarUrl,
         selfAvatarUrlPreview: data.selfAvatarUrlPreview,
         profileFollowers: data.profileFollowers,
@@ -378,7 +382,7 @@ export function CircleApp(props: CircleAppProps = {}) {
                 </p>
               </>
             ) : viewMode === "ai" ? (
-              <AIDiagnosisPanel self={self} users={users} />
+              <AIDiagnosisPanel self={self} users={users} selfTweets={selfTweets} />
             ) : (
               <AccountValuePanel self={self} users={users} />
             )}

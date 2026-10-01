@@ -12,6 +12,8 @@ import {
 type Props = {
   self: SelfProfile;
   users: CircleUser[];
+  /** 自分の最近の投稿（診断の文脈用） */
+  selfTweets?: string[];
 };
 
 const AI_APPS = [
@@ -22,7 +24,7 @@ const AI_APPS = [
   { name: "Grok", url: "https://x.com/i/grok" },
 ];
 
-export function AIDiagnosisPanel({ self, users }: Props) {
+export function AIDiagnosisPanel({ self, users, selfTweets }: Props) {
   const { locale, t } = useLocale();
   const [selected, setSelected] = useState<DiagnosisType | null>(null);
   const [partner, setPartner] = useState("");
@@ -33,11 +35,12 @@ export function AIDiagnosisPanel({ self, users }: Props) {
     return generatePrompt(
       selected,
       locale as "ja" | "en",
-      self.screenName,
+      self,
       users,
       DIAGNOSIS_DEFS.find((d) => d.id === selected)?.needsPartner ? partner || undefined : undefined,
+      selfTweets,
     );
-  }, [selected, self.screenName, users, partner, locale]);
+  }, [selected, self, users, partner, locale, selfTweets]);
 
   const handleCopy = useCallback(async () => {
     try {

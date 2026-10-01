@@ -68,6 +68,8 @@ export async function yahooAggregatesToCircleUsers(
     received: number;
     sent: number;
     last: number;
+    fromThem?: string;
+    toThem?: string;
   }[] = [];
   for (const k of keys) {
     if (k.toLowerCase() === self) continue;
@@ -84,6 +86,8 @@ export async function yahooAggregatesToCircleUsers(
         received,
         sent,
         last: Math.max(a?.last ?? 0, b?.last ?? 0),
+        fromThem: a?.text,
+        toThem: b?.text,
       });
   }
 
@@ -111,10 +115,13 @@ export async function yahooAggregatesToCircleUsers(
       const wantHd = hdForAll || hdIndexes.has(i);
       const hdRaw = wantHd ? await resolveCircleAvatarUrl(r.screen) : null;
       const avatarUrl = hdRaw?.trim() || undefined;
+      const keepContext = i < 64;
       return {
         id: `yahoo-${r.screen}-${i}`,
         screenName: r.screen,
         displayName: r.name || r.screen,
+        latestFromThem: keepContext ? r.fromThem : undefined,
+        latestToThem: keepContext ? r.toThem : undefined,
         avatarUrlPreview: preview,
         avatarUrl,
         interactionScore: Math.max(1, Math.round((r.n / max) * 100)),

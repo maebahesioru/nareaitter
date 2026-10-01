@@ -16,6 +16,10 @@ export type CircleUser = {
   mentionsSent?: number;
   /** 最後にやりとりした日時（ISO 8601）。不明なら undefined */
   lastInteractionAt?: string;
+  /** 相手の最新投稿（自分宛メンション）の文面。上位ユーザーのみ */
+  latestFromThem?: string;
+  /** 自分の最新投稿（相手宛メンション）の文面。上位ユーザーのみ */
+  latestToThem?: string;
 };
 
 export type FamilyRelationType = "self" | "parent" | "spouse" | "child" | "sibling" | "relative";
