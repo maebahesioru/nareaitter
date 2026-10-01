@@ -465,28 +465,52 @@ export function cleanSnippet(raw: string | undefined, max = 80): string | undefi
   return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 
-/** 1 相手あたりの集計: 回数・最終交流（epoch 秒）・表示名・最新文面（診断の文脈用） */
-export type MentionPeerAgg = { n: number; last: number; name?: string; text?: string };
+/** 1 相手あたりの集計（診断の文脈用に初回/7日数/1つ前の文面も持つ） */
+export type MentionPeerAgg = {
+  n: number;
+  last: number;
+  name?: string;
+  text?: string;
+  prevText?: string;
+  /** 内部用: text / prevText の時刻 */
+  textT?: number;
+  prevT?: number;
+  first?: number;
+  n7?: number;
+};
 
 export function aggregateMentionAuthors(
   mentionsToYou: YahooRealtimeEntry[],
 ): Record<string, MentionPeerAgg> {
+  const nowSec = Math.floor(Date.now() / 1000);
   const map: Record<string, MentionPeerAgg> = {};
   for (const e of mentionsToYou) {
     const sn = (e.screenName ?? "unknown").toLowerCase();
     const t = typeof e.createdAt === "number" && e.createdAt > 0 ? e.createdAt : 0;
     const nm = (e.name ?? "").trim();
     const txt = cleanSnippet(e.displayText);
+    const is7d = t >= nowSec - 7 * 86400;
     const cur = map[sn];
     if (cur) {
       cur.n += 1;
-      if (t >= cur.last) {
-        cur.last = t;
-        if (txt) cur.text = txt;
+      if (is7d) cur.n7 = (cur.n7 ?? 0) + 1;
+      if (t >= cur.last) cur.last = t;
+      if (txt) {
+        const ct = cur.textT ?? 0;
+        if (!cur.text || t > ct) {
+          cur.prevText = cur.text;
+          cur.prevT = ct;
+          cur.text = txt;
+          cur.textT = t;
+        } else if (t > (cur.prevT ?? 0) && txt !== cur.text) {
+          cur.prevText = txt;
+          cur.prevT = t;
+        }
       }
+      if (t > 0 && (cur.first === undefined || t < cur.first)) cur.first = t;
       if (!cur.name && nm) cur.name = nm;
     } else {
-      map[sn] = { n: 1, last: t, name: nm || undefined, text: txt };
+      map[sn] = { n: 1, last: t, name: nm || undefined, text: txt, textT: t, first: t || undefined, n7: is7d ? 1 : 0 };
     }
   }
   return map;
@@ -497,10 +521,12 @@ export function aggregateMentionTargets(
   selfScreenName: string,
 ): Record<string, MentionPeerAgg> {
   const self = selfScreenName.toLowerCase();
+  const nowSec = Math.floor(Date.now() / 1000);
   const map: Record<string, MentionPeerAgg> = {};
   for (const e of mentionsFromYou) {
     const t = typeof e.createdAt === "number" && e.createdAt > 0 ? e.createdAt : 0;
     const ownTxt = cleanSnippet(e.displayText);
+    const is7d = t >= nowSec - 7 * 86400;
     for (const m of e.mentions ?? []) {
       const sn = (m.screenName ?? "").toLowerCase();
       if (!sn || sn === self) continue;
@@ -508,15 +534,51 @@ export function aggregateMentionTargets(
       const cur = map[sn];
       if (cur) {
         cur.n += 1;
-        if (t >= cur.last) {
-          cur.last = t;
-          if (ownTxt) cur.text = ownTxt;
+        if (is7d) cur.n7 = (cur.n7 ?? 0) + 1;
+        if (t >= cur.last) cur.last = t;
+        if (ownTxt) {
+          const ct = cur.textT ?? 0;
+          if (!cur.text || t > ct) {
+            cur.prevText = cur.text;
+            cur.prevT = ct;
+            cur.text = ownTxt;
+            cur.textT = t;
+          } else if (t > (cur.prevT ?? 0) && ownTxt !== cur.text) {
+            cur.prevText = ownTxt;
+            cur.prevT = t;
+          }
         }
+        if (t > 0 && (cur.first === undefined || t < cur.first)) cur.first = t;
         if (!cur.name && nm) cur.name = nm;
       } else {
-        map[sn] = { n: 1, last: t, name: nm || undefined, text: ownTxt };
+        map[sn] = { n: 1, last: t, name: nm || undefined, text: ownTxt, textT: t, first: t || undefined, n7: is7d ? 1 : 0 };
       }
     }
   }
   return map;
+}
+
+/** 自分の直近ツイート（メンション無しも含む・1ページだけ取得） */
+export async function fetchSelfRecentTweets(
+  screenName: string,
+  limit = 12,
+): Promise<Array<{ text: string; hasMention: boolean; at: number }>> {
+  const name = normalizeScreenName(screenName);
+  if (!name) return [];
+  try {
+    const r = await fetchPaginationJson(`ID:${name}`, { start: 1 });
+    if (!r.ok) return [];
+    const entries = getEntries(r.data);
+    return entries
+      .map((e) => ({
+        text: cleanSnippet(e.displayText, 100) ?? "",
+        hasMention: (e.mentions?.length ?? 0) > 0,
+        at: typeof e.createdAt === "number" ? e.createdAt : 0,
+      }))
+      .filter((x) => x.text)
+      .sort((a, b) => b.at - a.at)
+      .slice(0, limit);
+  } catch {
+    return [];
+  }
 }

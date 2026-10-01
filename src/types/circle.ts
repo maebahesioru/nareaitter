@@ -20,6 +20,14 @@ export type CircleUser = {
   latestFromThem?: string;
   /** 自分の最新投稿（相手宛メンション）の文面。上位ユーザーのみ */
   latestToThem?: string;
+  /** 相手の1つ前の投稿文面（トップ20のみ） */
+  latestFromThem2?: string;
+  /** 自分の1つ前の投稿文面（トップ20のみ） */
+  latestToThem2?: string;
+  /** 直近7日間の交流回数（上位ユーザーのみ） */
+  mentionsLast7d?: number;
+  /** 最初に交流した日時（ISO 8601・上位ユーザーのみ） */
+  firstInteractionAt?: string;
 };
 
 export type FamilyRelationType = "self" | "parent" | "spouse" | "child" | "sibling" | "relative";

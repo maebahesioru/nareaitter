@@ -68,8 +68,12 @@ export async function yahooAggregatesToCircleUsers(
     received: number;
     sent: number;
     last: number;
+    first?: number;
+    n7: number;
     fromThem?: string;
     toThem?: string;
+    fromThem2?: string;
+    toThem2?: string;
   }[] = [];
   for (const k of keys) {
     if (k.toLowerCase() === self) continue;
@@ -78,7 +82,8 @@ export async function yahooAggregatesToCircleUsers(
     const received = a?.n ?? 0;
     const sent = b?.n ?? 0;
     const n = received + sent;
-    if (n > 0)
+    if (n > 0) {
+      const firstCandidates = [a?.first, b?.first].filter((x): x is number => typeof x === "number" && x > 0);
       rows.push({
         screen: k,
         name: (a?.name || b?.name || "").trim(),
@@ -86,9 +91,14 @@ export async function yahooAggregatesToCircleUsers(
         received,
         sent,
         last: Math.max(a?.last ?? 0, b?.last ?? 0),
+        first: firstCandidates.length ? Math.min(...firstCandidates) : undefined,
+        n7: (a?.n7 ?? 0) + (b?.n7 ?? 0),
         fromThem: a?.text,
         toThem: b?.text,
+        fromThem2: a?.prevText,
+        toThem2: b?.prevText,
       });
+    }
   }
 
   rows.sort((a, b) => b.n - a.n);
@@ -116,12 +126,20 @@ export async function yahooAggregatesToCircleUsers(
       const hdRaw = wantHd ? await resolveCircleAvatarUrl(r.screen) : null;
       const avatarUrl = hdRaw?.trim() || undefined;
       const keepContext = i < 64;
+      const keepDeep = i < 20;
       return {
         id: `yahoo-${r.screen}-${i}`,
         screenName: r.screen,
         displayName: r.name || r.screen,
         latestFromThem: keepContext ? r.fromThem : undefined,
         latestToThem: keepContext ? r.toThem : undefined,
+        latestFromThem2: keepDeep ? r.fromThem2 : undefined,
+        latestToThem2: keepDeep ? r.toThem2 : undefined,
+        mentionsLast7d: keepContext ? r.n7 : undefined,
+        firstInteractionAt:
+          keepContext && r.first && r.first > 0
+            ? new Date(r.first * 1000).toISOString()
+            : undefined,
         avatarUrlPreview: preview,
         avatarUrl,
         interactionScore: Math.max(1, Math.round((r.n / max) * 100)),

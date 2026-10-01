@@ -5,6 +5,7 @@ import {
   buildYahooAuthorProfileImageMap,
   cleanSnippet,
   fetchMentionsBothParallel,
+  fetchSelfRecentTweets,
   pickSelfProfileImageFromYahoo,
 } from "@/lib/yahoo-realtime-fetch";
 import { spriteSliceSig } from "@/lib/sprite-sig";
@@ -112,13 +113,34 @@ export async function buildYahooPayload(
 
   if (buildCircle) {
     const T1 = Date.now();
-    // 自分の最近の投稿（診断プロンプトの文脈用・最新8件）
-    const selfRecent = [...mentionsFromYou]
-      .sort((x, y) => (y.createdAt ?? 0) - (x.createdAt ?? 0))
-      .slice(0, 8)
-      .map((e) => cleanSnippet(e.displayText, 100))
-      .filter((t): t is string => Boolean(t));
-    if (selfRecent.length) payload.recentSelfTweets = selfRecent;
+    // 自分の最近の投稿（メンション無しも含む・診断の文脈用）と活動統計
+    const selfTimeline = await fetchSelfRecentTweets(name, 12);
+    if (selfTimeline.length) {
+      payload.recentSelfTweets = selfTimeline.map((t) =>
+        t.hasMention ? t.text : `${t.text}`,
+      );
+    }
+    const nowSec = Math.floor(Date.now() / 1000);
+    const hours = new Array<number>(24).fill(0);
+    for (const e of mentionsFromYou) {
+      if (typeof e.createdAt === "number" && e.createdAt > 0) {
+        const h = new Date(e.createdAt * 1000).getHours();
+        hours[h] += 1;
+      }
+    }
+    const topHours = hours
+      .map((cnt, h) => ({ h, cnt }))
+      .filter((x) => x.cnt > 0)
+      .sort((a, b) => b.cnt - a.cnt)
+      .slice(0, 3)
+      .map((x) => x.h);
+    const fromYou7d = mentionsFromYou.filter(
+      (e) => (e.createdAt ?? 0) >= nowSec - 7 * 86400,
+    ).length;
+    const toYou7d = mentionsToYou.filter(
+      (e) => (e.createdAt ?? 0) >= nowSec - 7 * 86400,
+    ).length;
+    payload.selfActivity = { topHours, fromYou7d, toYou7d };
     const yahooPeerImages = buildYahooAuthorProfileImageMap(mentionsToYou);
     const selfYahoo = pickSelfProfileImageFromYahoo(mentionsFromYou);
     const [circleUsers, selfHd, profileData] = await Promise.all([
@@ -157,7 +179,7 @@ function getCachedYahooPayload(name: string, buildCircle: boolean) {
   return unstable_cache(
     () => buildYahooPayload(name, buildCircle),
     [
-      "yahoo-mentions-v4",
+      "yahoo-mentions-v6",
       name.toLowerCase(),
       buildCircle ? "circle" : "counts",
     ],

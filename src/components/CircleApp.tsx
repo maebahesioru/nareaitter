@@ -53,6 +53,7 @@ type YahooMentionsResponse = {
   counts: { mentionsToYou: number; mentionsFromYou: number };
   circleUsers?: CircleUser[];
   recentSelfTweets?: string[];
+  selfActivity?: { topHours: number[]; fromYou7d: number; toYou7d: number };
   selfAvatarUrl?: string;
   selfAvatarUrlPreview?: string;
   profileFollowers?: number;
@@ -84,6 +85,7 @@ export function CircleApp(props: CircleAppProps = {}) {
   const [maxUsers, setMaxUsers] = useState(9999);
   const [viewMode, setViewMode] = useState<ViewMode>("circle");
   const [selfTweets, setSelfTweets] = useState<string[]>([]);
+  const [selfActivity, setSelfActivity] = useState<{ topHours: number[]; fromYou7d: number; toYou7d: number } | null>(null);
 
   const fetchYahooMentions = useCallback(async (overrideHandle?: string) => {
     const name = (overrideHandle ?? yahooHandle).trim().replace(/^@+/, "");
@@ -101,6 +103,7 @@ export function CircleApp(props: CircleAppProps = {}) {
         fromYou: data.counts.mentionsFromYou,
       });
       setSelfTweets(data.recentSelfTweets ?? []);
+      setSelfActivity(data.selfActivity ?? null);
       const list = data.circleUsers ?? [];
       if (list.length === 0) {
         setError(t.noPeers);
@@ -154,6 +157,7 @@ export function CircleApp(props: CircleAppProps = {}) {
         counts: data.counts,
         circleUsers: data.circleUsers,
         recentSelfTweets: data.recentSelfTweets,
+        selfActivity: data.selfActivity,
         selfAvatarUrl: data.selfAvatarUrl,
         selfAvatarUrlPreview: data.selfAvatarUrlPreview,
         profileFollowers: data.profileFollowers,
@@ -382,7 +386,7 @@ export function CircleApp(props: CircleAppProps = {}) {
                 </p>
               </>
             ) : viewMode === "ai" ? (
-              <AIDiagnosisPanel self={self} users={users} selfTweets={selfTweets} />
+              <AIDiagnosisPanel self={self} users={users} selfTweets={selfTweets} selfActivity={selfActivity} />
             ) : (
               <AccountValuePanel self={self} users={users} />
             )}
