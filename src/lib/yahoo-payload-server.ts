@@ -82,7 +82,13 @@ export async function buildYahooPayload(
   name: string,
   buildCircle: boolean,
 ): Promise<Record<string, unknown>> {
+  const T0 = Date.now();
   const { mentionsToYou, mentionsFromYou } = await fetchMentionsBothParallel(name);
+  if (buildCircle) {
+    console.log(
+      `[payload] ${name} yahoo=${Date.now() - T0}ms to=${mentionsToYou.length} from=${mentionsFromYou.length}`,
+    );
+  }
 
   const authorsToYou = aggregateMentionAuthors(mentionsToYou);
   const targetsFromYou = aggregateMentionTargets(mentionsFromYou, name);
@@ -104,6 +110,7 @@ export async function buildYahooPayload(
   }
 
   if (buildCircle) {
+    const T1 = Date.now();
     const yahooPeerImages = buildYahooAuthorProfileImageMap(mentionsToYou);
     const selfYahoo = pickSelfProfileImageFromYahoo(mentionsFromYou);
     const [circleUsers, selfHd, profileData] = await Promise.all([
@@ -116,6 +123,9 @@ export async function buildYahooPayload(
       resolveCircleAvatarUrl(name),
       resolveProfileData(name),
     ]);
+    console.log(
+      `[payload] ${name} circle=${Date.now() - T1}ms users=${circleUsers.length} total=${Date.now() - T0}ms`,
+    );
     payload.circleUsers = circleUsers;
     if (selfHd?.trim()) payload.selfAvatarUrl = selfHd.trim();
     if (selfYahoo) payload.selfAvatarUrlPreview = selfYahoo;
@@ -158,6 +168,31 @@ const MEM_FRESH_MS = 180_000;
 const MEM_FAIL_RETRY_MS = 60_000;
 /** 保持件数（1件最大 ~450KB なので控えめに） */
 const MEM_MAX = 64;
+/**
+ * ビルドの上限時間。超えたら「失敗」扱いで pending を捨てる。
+ * これがないと、実行時間リミット等で resolve も reject もされないビルドの promise が
+ * pending に残り、以後の全リクエストがそれを待ち続けて永久ハングする（実測 2026-10-01）。
+ */
+const MEM_BUILD_TIMEOUT_MS = 90_000;
+
+function withBuildTimeout<T>(p: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("payload build timeout")),
+      MEM_BUILD_TIMEOUT_MS,
+    );
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
 
 type MemEntry = {
   payload?: Record<string, unknown>;
@@ -192,7 +227,7 @@ function serveWithSWR(
       : entry.pending.then((payload) => ({ payload, mode: "build" as const }));
   }
 
-  const pending = build().then(
+  const pending = withBuildTimeout(build()).then(
     (payload) => {
       if (memCache.size >= MEM_MAX) {
         let oldestKey: string | null = null;
