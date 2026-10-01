@@ -68,6 +68,7 @@ async function fetchYimgImage(url: string): Promise<Response> {
         Referer: referer,
       },
       next: { revalidate: 604800 },
+      signal: AbortSignal.timeout(8000),
     });
     if (res.ok) return res;
     // 404/410 は Referer を変えても無駄なので即諦める
@@ -104,6 +105,7 @@ export async function fetchProxiedImageUpstream(rawUrl: string): Promise<{
         redirect: "follow",
         headers: UPSTREAM_HEADERS,
         next: { revalidate: 604800 },
+        signal: AbortSignal.timeout(8000),
       });
 
   if (!res.ok) {

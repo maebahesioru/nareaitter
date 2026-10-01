@@ -56,7 +56,7 @@ async function fetchAvatarFxtwitter(cleanScreenName: string): Promise<AvatarProb
   try {
     const res = await fetch(
       `${FX_USER_API}/${encodeURIComponent(cleanScreenName)}`,
-      { headers: { Accept: "application/json" } },
+      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(6000) },
     );
     if (res.status === 404 || res.status === 410) return { url: null, dead: true };
     if (!res.ok) return { url: null, dead: false };
@@ -79,7 +79,7 @@ async function fetchAvatarVxtwitter(cleanScreenName: string): Promise<AvatarProb
   try {
     const res = await fetch(
       `${VX_USER_API}/${encodeURIComponent(cleanScreenName)}`,
-      { headers: { Accept: "application/json" } },
+      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(6000) },
     );
     if (res.status === 404 || res.status === 410) return { url: null, dead: true };
     if (!res.ok) return { url: null, dead: false };
@@ -201,7 +201,7 @@ export async function resolveProfileData(screenName: string): Promise<XProfileDa
     try {
       const res = await fetch(
         `${FX_USER_API}/${encodeURIComponent(clean)}`,
-        { headers: { Accept: "application/json" } },
+        { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(6000) },
       );
       if (!res.ok) continue;
       const data = (await res.json()) as FxTwitterUserResponse;
