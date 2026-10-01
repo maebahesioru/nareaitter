@@ -23,7 +23,11 @@ export function InteractionTable({ users }: { users: CircleUser[] }) {
   const rows = useMemo(() => {
     const q = filter.trim().toLowerCase();
     const filtered = q
-      ? users.filter((u) => u.screenName.toLowerCase().includes(q))
+      ? users.filter(
+          (u) =>
+            u.screenName.toLowerCase().includes(q) ||
+            (u.displayName ?? "").toLowerCase().includes(q),
+        )
       : users.slice();
 
     const val = (u: CircleUser): number => {
@@ -155,9 +159,31 @@ export function InteractionTable({ users }: { users: CircleUser[] }) {
                         target="_blank"
                         rel="noopener noreferrer"
                         title={`@${u.screenName}`}
-                        className="truncate text-zinc-800 underline-offset-2 hover:text-sky-600 hover:underline dark:text-zinc-200 dark:hover:text-sky-400"
+                        className="min-w-0 truncate underline-offset-2 hover:text-sky-600 hover:underline dark:hover:text-sky-400"
                       >
-                        @{u.screenName}
+                        {(() => {
+                          const display = (u.displayName ?? "").trim();
+                          const sameAsHandle =
+                            !display ||
+                            display.toLowerCase() === u.screenName.toLowerCase();
+                          if (sameAsHandle) {
+                            return (
+                              <span className="block truncate text-zinc-800 dark:text-zinc-200">
+                                @{u.screenName}
+                              </span>
+                            );
+                          }
+                          return (
+                            <>
+                              <span className="block truncate text-zinc-800 dark:text-zinc-200">
+                                {display}
+                              </span>
+                              <span className="block truncate text-xs text-zinc-500 dark:text-zinc-500">
+                                @{u.screenName}
+                              </span>
+                            </>
+                          );
+                        })()}
                       </a>
                     </span>
                   </td>

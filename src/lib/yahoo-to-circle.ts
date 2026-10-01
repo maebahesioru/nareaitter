@@ -63,6 +63,7 @@ export async function yahooAggregatesToCircleUsers(
 
   const rows: {
     screen: string;
+    name: string;
     n: number;
     received: number;
     sent: number;
@@ -78,6 +79,7 @@ export async function yahooAggregatesToCircleUsers(
     if (n > 0)
       rows.push({
         screen: k,
+        name: (a?.name || b?.name || "").trim(),
         n,
         received,
         sent,
@@ -112,7 +114,7 @@ export async function yahooAggregatesToCircleUsers(
       return {
         id: `yahoo-${r.screen}-${i}`,
         screenName: r.screen,
-        displayName: r.screen,
+        displayName: r.name || r.screen,
         avatarUrlPreview: preview,
         avatarUrl,
         interactionScore: Math.max(1, Math.round((r.n / max) * 100)),

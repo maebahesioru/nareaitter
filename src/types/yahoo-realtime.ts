@@ -6,7 +6,7 @@ export type YahooRealtimeEntry = {
   screenName?: string;
   name?: string;
   profileImage?: string;
-  mentions?: { screenName?: string; indices?: number[] }[];
+  mentions?: { screenName?: string; name?: string; indices?: number[] }[];
   userUrl?: string;
   url?: string;
 };

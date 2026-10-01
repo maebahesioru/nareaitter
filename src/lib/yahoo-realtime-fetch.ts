@@ -412,8 +412,8 @@ export async function fetchMentionsBothParallel(screenName: string): Promise<{
   return { mentionsToYou, mentionsFromYou };
 }
 
-/** 1 相手あたりの集計: メンション回数と最終交流時刻（epoch 秒） */
-export type MentionPeerAgg = { n: number; last: number };
+/** 1 相手あたりの集計: メンション回数・最終交流時刻（epoch 秒）・表示名 */
+export type MentionPeerAgg = { n: number; last: number; name?: string };
 
 export function aggregateMentionAuthors(
   mentionsToYou: YahooRealtimeEntry[],
@@ -422,12 +422,14 @@ export function aggregateMentionAuthors(
   for (const e of mentionsToYou) {
     const sn = (e.screenName ?? "unknown").toLowerCase();
     const t = typeof e.createdAt === "number" && e.createdAt > 0 ? e.createdAt : 0;
+    const nm = (e.name ?? "").trim();
     const cur = map[sn];
     if (cur) {
       cur.n += 1;
       if (t > cur.last) cur.last = t;
+      if (!cur.name && nm) cur.name = nm;
     } else {
-      map[sn] = { n: 1, last: t };
+      map[sn] = { n: 1, last: t, name: nm || undefined };
     }
   }
   return map;
@@ -444,12 +446,14 @@ export function aggregateMentionTargets(
     for (const m of e.mentions ?? []) {
       const sn = (m.screenName ?? "").toLowerCase();
       if (!sn || sn === self) continue;
+      const nm = (m.name ?? "").trim();
       const cur = map[sn];
       if (cur) {
         cur.n += 1;
         if (t > cur.last) cur.last = t;
+        if (!cur.name && nm) cur.name = nm;
       } else {
-        map[sn] = { n: 1, last: t };
+        map[sn] = { n: 1, last: t, name: nm || undefined };
       }
     }
   }
