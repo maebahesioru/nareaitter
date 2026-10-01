@@ -16,7 +16,7 @@ type PreviewLike = { avatarUrlPreview?: string | null; avatarUrl?: string | null
  * 合成ロジックを変えてエッジ/オリジンの古いシートを捨てたいときに +1 する
  * （クライアントURLの rev パラメータとオリジンの unstable_cache キーの両方に入る）。
  */
-export const SPRITE_REV = "5";
+export const SPRITE_REV = "6";
 
 /** セルに使うURL（プレビュー優先、無ければHD） */
 export function spriteCellUrl(user: PreviewLike): string {
