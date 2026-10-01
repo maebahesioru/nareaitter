@@ -18,7 +18,7 @@ const COLS = 10;
 /** 1リクエストで合成する最大セル数 */
 const MAX_CELLS = 120;
 /** 上流フェッチの並列上限 */
-const UPSTREAM_CONCURRENCY = 24;
+const UPSTREAM_CONCURRENCY = 32;
 
 type CircleUserLite = {
   avatarUrlPreview?: string | null;
@@ -144,7 +144,7 @@ export async function GET(req: NextRequest) {
   return new NextResponse(new Uint8Array(sprite), {
     headers: {
       "Content-Type": "image/jpeg",
-      "Cache-Control": "public, s-maxage=3600, max-age=600",
+      "Cache-Control": "public, s-maxage=3600, max-age=3600",
       "X-Sprite-Sig": sig,
       "X-Sprite-Dead": composed.deadHex,
       "X-Sprite-Cell": String(CELL),

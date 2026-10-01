@@ -400,7 +400,7 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
       const SPRITE_CELL = 48;
       const SPRITE_COLS = 10;
       const SPRITE_CHUNK = 100;
-      const SPRITE_POOL = 6;
+      const SPRITE_POOL = 8;
 
       let active = 0;
       const waiters: Array<() => void> = [];

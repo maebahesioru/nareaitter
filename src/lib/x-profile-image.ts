@@ -49,35 +49,46 @@ export function upscaledTwitterProfileImageUrl(url: string): string {
   }
 }
 
-async function fetchAvatarFxtwitter(cleanScreenName: string): Promise<string | null> {
+/** アバター取得の結果。dead=true は「アカウントが存在しない」等の確定失敗（リトライ無意味） */
+type AvatarProbe = { url: string | null; dead: boolean };
+
+async function fetchAvatarFxtwitter(cleanScreenName: string): Promise<AvatarProbe> {
   try {
     const res = await fetch(
       `${FX_USER_API}/${encodeURIComponent(cleanScreenName)}`,
       { headers: { Accept: "application/json" } },
     );
-    if (!res.ok) return null;
+    if (res.status === 404 || res.status === 410) return { url: null, dead: true };
+    if (!res.ok) return { url: null, dead: false };
     const data = (await res.json()) as FxTwitterUserResponse;
-    if (data.code !== 200 || !data.user?.avatar_url?.trim()) return null;
-    return upscaledTwitterProfileImageUrl(data.user.avatar_url.trim());
+    if (data.code === 404) return { url: null, dead: true };
+    if (data.code !== 200 || !data.user?.avatar_url?.trim()) {
+      return { url: null, dead: false };
+    }
+    return {
+      url: upscaledTwitterProfileImageUrl(data.user.avatar_url.trim()),
+      dead: false,
+    };
   } catch {
-    return null;
+    return { url: null, dead: false };
   }
 }
 
 /** vxtwitter はフラット JSON（profile_image_url）。fxtwitter とは形が異なる */
-async function fetchAvatarVxtwitter(cleanScreenName: string): Promise<string | null> {
+async function fetchAvatarVxtwitter(cleanScreenName: string): Promise<AvatarProbe> {
   try {
     const res = await fetch(
       `${VX_USER_API}/${encodeURIComponent(cleanScreenName)}`,
       { headers: { Accept: "application/json" } },
     );
-    if (!res.ok) return null;
+    if (res.status === 404 || res.status === 410) return { url: null, dead: true };
+    if (!res.ok) return { url: null, dead: false };
     const data = (await res.json()) as { profile_image_url?: string };
     const raw = data.profile_image_url?.trim();
-    if (!raw) return null;
-    return upscaledTwitterProfileImageUrl(raw);
+    if (!raw) return { url: null, dead: false };
+    return { url: upscaledTwitterProfileImageUrl(raw), dead: false };
   } catch {
-    return null;
+    return { url: null, dead: false };
   }
 }
 
@@ -87,12 +98,14 @@ const AVATAR_RETRY_BASE_DELAY_MS = 120;
 
 /**
  * fxtwitter を先に試し、失敗したときだけ vxtwitter にフォールバックする。
- * （従来は常に両方へ並列リクエストしており、取得数が単純に 2 倍だった）
+ * 両方で「存在しない(404)」なら dead=true（リトライしても無駄と判定）。
  */
-async function fetchXAvatarUrlOnce(cleanScreenName: string): Promise<string | null> {
-  const fromFx = await fetchAvatarFxtwitter(cleanScreenName);
-  if (fromFx) return fromFx;
-  return fetchAvatarVxtwitter(cleanScreenName);
+async function fetchXAvatarUrlOnce(cleanScreenName: string): Promise<AvatarProbe> {
+  const fx = await fetchAvatarFxtwitter(cleanScreenName);
+  if (fx.url) return fx;
+  const vx = await fetchAvatarVxtwitter(cleanScreenName);
+  if (vx.url) return vx;
+  return { url: null, dead: fx.dead && vx.dead };
 }
 
 /**
@@ -118,8 +131,28 @@ function writeAvatarMem(key: string, url: string): void {
   avatarMem.set(key, { t: Date.now(), url });
 }
 
+/** 確定死（存在しないアカウント等）のネガティブメモ。再ビルドのたびに無駄なリトライをしない */
+const AVATAR_DEAD_TTL_MS = 6 * 60 * 60 * 1000;
+const avatarDeadMem = new Map<string, number>();
+
+function isAvatarKnownDead(key: string): boolean {
+  const until = avatarDeadMem.get(key);
+  if (until === undefined) return false;
+  if (Date.now() > until) {
+    avatarDeadMem.delete(key);
+    return false;
+  }
+  return true;
+}
+
+function writeAvatarDeadMem(key: string): void {
+  if (avatarDeadMem.size >= AVATAR_MEM_MAX) avatarDeadMem.clear();
+  avatarDeadMem.set(key, Date.now() + AVATAR_DEAD_TTL_MS);
+}
+
 /**
  * 上記を最大 {@link AVATAR_RETRY_ATTEMPTS} 回。失敗のたびに間隔を空けて再試行（自分・相手共通）。
+ * 両サービスが404を返したら確定死として即諦める（リトライラダーで数秒浪費しない）。
  */
 export async function fetchXAvatarUrl(screenName: string): Promise<string | null> {
   const clean = screenName.replace(/^@/, "").trim();
@@ -127,17 +160,22 @@ export async function fetchXAvatarUrl(screenName: string): Promise<string | null
   const key = clean.toLowerCase();
   const cached = readAvatarMem(key);
   if (cached) return cached;
+  if (isAvatarKnownDead(key)) return null;
   for (let attempt = 0; attempt < AVATAR_RETRY_ATTEMPTS; attempt++) {
     if (attempt > 0) {
       await new Promise((r) =>
         setTimeout(r, AVATAR_RETRY_BASE_DELAY_MS * attempt),
       );
     }
-    const url = await fetchXAvatarUrlOnce(clean);
-    if (url?.trim()) {
-      const trimmed = url.trim();
+    const probe = await fetchXAvatarUrlOnce(clean);
+    if (probe.url?.trim()) {
+      const trimmed = probe.url.trim();
       writeAvatarMem(key, trimmed);
       return trimmed;
+    }
+    if (probe.dead) {
+      writeAvatarDeadMem(key);
+      return null;
     }
   }
   return null;

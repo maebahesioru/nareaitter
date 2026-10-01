@@ -1,8 +1,8 @@
 import type { CircleUser } from "@/types/circle";
 import { resolveCircleAvatarUrl } from "@/lib/x-profile-image";
 
-/** 無制限並列だと FixTweet 系 API が 429 になり再試行で遅延が積む */
-const AVATAR_FETCH_CONCURRENCY = 14;
+/** 無制限並列だと FixTweet 系 API が 429 になり再試行で遅延が積む（実測: 28並列までは429なし・63req/s） */
+const AVATAR_FETCH_CONCURRENCY = 28;
 
 /**
  * 高画質（fxtwitter/vxtwitter）アバター取得のしきい値。
