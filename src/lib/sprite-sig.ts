@@ -1,13 +1,20 @@
 /**
  * スプライトのシグネチャと欠損マスク（クライアント・サーバー共有）
  *
- * - シグネチャ: スライスのプレビューURL列から計算する FNV-1a 32bit ハッシュ。
+ * - セルURL: プレビュー（Yahoo 48px）優先、無ければHD（pbs）。
+ *   プレビューが無いユーザーもスプライトに載せる（個別取得を減らす）。
+ * - シグネチャ: スライスのURL列から計算する FNV-1a 32bit ハッシュ。
  *   クライアントが持つデータとサーバーが合成に使ったデータが同一リビジョンかを検証する。
  * - 欠損マスク: スプライト内のセルごとの「合成できなかった（死んだURL等）」ビット。
  *   hex文字列でヘッダに載せる（120セル = 30文字）。
  */
 
-type PreviewLike = { avatarUrlPreview?: string | null };
+type PreviewLike = { avatarUrlPreview?: string | null; avatarUrl?: string | null };
+
+/** セルに使うURL（プレビュー優先、無ければHD） */
+export function spriteCellUrl(user: PreviewLike): string {
+  return (user.avatarUrlPreview ?? "").trim() || (user.avatarUrl ?? "").trim();
+}
 
 function fnv1a32(text: string): number {
   let h = 2166136261;
@@ -20,9 +27,7 @@ function fnv1a32(text: string): number {
 
 /** スライス（描画順）のシグネチャ。URL欠落は空文字として扱う */
 export function spriteSliceSig(slice: PreviewLike[]): string {
-  const joined = slice
-    .map((u) => (u.avatarUrlPreview ?? "").trim())
-    .join("\n");
+  const joined = slice.map(spriteCellUrl).join("\n");
   return fnv1a32(joined).toString(16).padStart(8, "0");
 }
 

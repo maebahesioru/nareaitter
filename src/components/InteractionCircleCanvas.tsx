@@ -384,15 +384,12 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
       const shouldUpgrade = (p?: string, h?: string) =>
         Boolean(p?.trim() && h?.trim() && p !== h);
 
-      // 自分のアイコンを先に描画
-      const selfImg = await loadImageFirstAvailable(
+      // 自分のアイコンは読み込みを開始だけしておく（スプライトと並行に進める）
+      const selfImgPromise = loadImageFirstAvailable(
         undefined,
         self.avatarUrlPreview,
         self.avatarUrl,
       );
-      if (!cancelled && selfImg && self.screenName) {
-        drawImageCoverInSquare(ctx, selfImg, W / 2, W / 2, halfSelf);
-      }
 
       // ── 画像取得: スプライト方式 + 個別取得フォールバック ──
       // スプライト: 約100セルを1枚のJPEGシートに合成したものを取得（≈10リクエストで全員ぶん）。
@@ -403,7 +400,7 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
       const SPRITE_CELL = 48;
       const SPRITE_COLS = 10;
       const SPRITE_CHUNK = 100;
-      const SPRITE_POOL = 4;
+      const SPRITE_POOL = 6;
 
       let active = 0;
       const waiters: Array<() => void> = [];
@@ -490,6 +487,12 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
         spriteJobs.push(spriteGate(() => loadSprite(start, end - start, sig)));
       }
 
+      // スプライト取得を開始したので、自分のアイコンの完了を待って先に描く
+      const selfImg = await selfImgPromise;
+      if (!cancelled && selfImg && self.screenName) {
+        drawImageCoverInSquare(ctx, selfImg, W / 2, W / 2, halfSelf);
+      }
+
       const spriteResolved: SpriteHit[] = new Array(chunkCount).fill(null);
       const spriteDoneFlags: boolean[] = new Array(chunkCount).fill(false);
       const perImageJobs: (Promise<HTMLImageElement | null> | null)[] =
@@ -503,17 +506,27 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
         const start = c * SPRITE_CHUNK;
         const end = Math.min(total, start + SPRITE_CHUNK);
         for (let k = start; k < end; k++) {
-          const covered = hit !== null && !hit.dead[k - start];
-          if (!covered) {
-            const slot = slots[k];
-            perImageJobs[k] = gate(() =>
-              loadImageFirstAvailable(
-                undefined,
-                slot.user.avatarUrlPreview,
-                slot.user.avatarUrl,
-              ),
-            );
-          }
+          const within = k - start;
+          const covered = hit !== null && !hit.dead[within];
+          if (covered) continue;
+          // フォールバック条件:
+          //  - チャンク全体が失敗（409等） → 全セル従来の個別取得
+          //  - 死んだセルは「大きなマス×HD持ち」だけ救済（404を何度も引かない）
+          const cell = peerCells[k];
+          const side = cell ? Math.min(cell.cellW, cell.cellH) : 0;
+          const hasHd = Boolean(slots[k].user.avatarUrl?.trim());
+          const needFetch =
+            hit === null ||
+            (hasHd && side >= HD_UPGRADE_MIN_SIDE_PX);
+          if (!needFetch) continue;
+          const slot = slots[k];
+          perImageJobs[k] = gate(() =>
+            loadImageFirstAvailable(
+              undefined,
+              slot.user.avatarUrlPreview,
+              slot.user.avatarUrl,
+            ),
+          );
         }
       };
 
@@ -523,13 +536,12 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
           const cell = peerCells[i];
           if (!cell) return null;
           const side = Math.min(cell.cellW, cell.cellH);
-          if (
-            side < HD_UPGRADE_MIN_SIDE_PX ||
-            !shouldUpgrade(slot.user.avatarUrlPreview, slot.user.avatarUrl)
-          ) {
-            return null;
-          }
-          const hdUrl = slot.user.avatarUrl!.trim();
+          if (side < HD_UPGRADE_MIN_SIDE_PX) return null;
+          const hdUrl = slot.user.avatarUrl?.trim();
+          if (!hdUrl) return null;
+          // プレビューと同一URLなら差し替える意味がない
+          // （プレビュー無しのHD救済ユーザーもここでHD化される）
+          if ((slot.user.avatarUrlPreview ?? "").trim() === hdUrl) return null;
           return gate(async () => {
             try {
               return await loadImage(hdUrl);

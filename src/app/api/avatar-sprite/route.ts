@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { unstable_cache } from "next/cache";
 import sharp, { type OverlayOptions } from "sharp";
 import { fetchProxiedImageUpstream } from "@/lib/image-proxy-upstream";
-import { deadMaskToHex, spriteSliceSig } from "@/lib/sprite-sig";
+import { deadMaskToHex, spriteCellUrl, spriteSliceSig } from "@/lib/sprite-sig";
 import {
   findCircleUsersForSig,
   getServedYahooPayload,
@@ -20,7 +20,10 @@ const MAX_CELLS = 120;
 /** 上流フェッチの並列上限 */
 const UPSTREAM_CONCURRENCY = 24;
 
-type CircleUserLite = { avatarUrlPreview?: string | null };
+type CircleUserLite = {
+  avatarUrlPreview?: string | null;
+  avatarUrl?: string | null;
+};
 
 async function mapLimit<T>(
   items: T[],
@@ -97,7 +100,7 @@ export async function GET(req: NextRequest) {
       const composites: OverlayOptions[] = [];
 
       await mapLimit(slice, UPSTREAM_CONCURRENCY, async (u, i) => {
-        const raw = (u.avatarUrlPreview ?? "").trim();
+        const raw = spriteCellUrl(u);
         if (!raw) {
           dead[i] = true;
           return;
