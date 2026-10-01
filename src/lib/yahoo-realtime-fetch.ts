@@ -86,6 +86,16 @@ function getHttpProxyFetches(): Array<typeof fetch> {
   return httpProxyFetches;
 }
 
+/**
+ * Cloudflare Worker リレー（独立した出口の最終予備）。
+ * ベースURLに `/pagination?...` をそのまま繋げて使う（Worker 側が Yahoo へ中継）。
+ * 例: https://yahoo-relay.restart-notslander.workers.dev
+ */
+const YAHOO_RELAY_URL = (() => {
+  const v = process.env.YAHOO_RELAY_URL?.trim();
+  return v && /^https:\/\//i.test(v) ? v.replace(/\/$/, "") : null;
+})();
+
 const YAHOO_HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -120,8 +130,9 @@ function noteProxyFailure(): void {
 }
 
 async function yahooFetch(pathAndQuery: string): Promise<Response> {
-  const canDirect =
-    YAHOO_HTTP_PROXY_URLS.length === 0 || Date.now() >= directSkippedUntil;
+  const hasFallback =
+    YAHOO_HTTP_PROXY_URLS.length > 0 || Boolean(YAHOO_RELAY_URL);
+  const canDirect = !hasFallback || Date.now() >= directSkippedUntil;
   let lastRes: Response | null = null;
   let lastError: unknown = null;
 
@@ -144,28 +155,46 @@ async function yahooFetch(pathAndQuery: string): Promise<Response> {
     }
   }
 
+  let anyFallbackOk = false;
+
   const proxyFetches = getHttpProxyFetches();
-  if (proxyFetches.length > 0) {
-    let anyOk = false;
-    for (const proxyFetch of proxyFetches) {
-      try {
-        const res = await proxyFetch(`${YAHOO_DIRECT_BASE}${pathAndQuery}`, {
-          headers: YAHOO_HEADERS,
-          cache: "no-store",
-          signal: AbortSignal.timeout(15000),
-        } as RequestInit);
-        if (res.ok) {
-          anyOk = true;
-          return res;
-        }
-        lastRes = lastRes ?? res;
-      } catch (e) {
-        lastError = lastError ?? e;
+  for (const proxyFetch of proxyFetches) {
+    try {
+      const res = await proxyFetch(`${YAHOO_DIRECT_BASE}${pathAndQuery}`, {
+        headers: YAHOO_HEADERS,
+        cache: "no-store",
+        signal: AbortSignal.timeout(15000),
+      } as RequestInit);
+      if (res.ok) {
+        anyFallbackOk = true;
+        return res;
       }
+      lastRes = lastRes ?? res;
+    } catch (e) {
+      lastError = lastError ?? e;
     }
-    // 全出口が失敗したときだけ「直接に戻る」判断をする
-    if (!anyOk) noteProxyFailure();
   }
+
+  // Cloudflare Worker リレー（独立出口）
+  if (YAHOO_RELAY_URL) {
+    try {
+      const res = await fetch(`${YAHOO_RELAY_URL}${pathAndQuery}`, {
+        headers: YAHOO_HEADERS,
+        cache: "no-store",
+        signal: AbortSignal.timeout(15000),
+      });
+      if (res.ok) {
+        anyFallbackOk = true;
+        return res;
+      }
+      lastRes = lastRes ?? res;
+    } catch (e) {
+      lastError = lastError ?? e;
+    }
+  }
+
+  // フォールバックが1つも成功しなかったときだけ「直接に戻る」判断をする
+  if (hasFallback && !anyFallbackOk) noteProxyFailure();
 
   // 非 OK レスポンスは呼び出し側で HTTP ステータスを握って判断する
   if (lastRes) return lastRes;
