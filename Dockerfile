@@ -11,7 +11,8 @@ FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN pnpm run build
+# .next/cache をビルド間で永続化（Turbopack のファイルシステムキャッシュ）
+RUN --mount=type=cache,id=next-build-cache,target=/app/.next/cache pnpm run build
 
 FROM base AS runner
 WORKDIR /app
@@ -19,14 +20,14 @@ ENV NODE_ENV production
 
 RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
 
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/next.config.ts ./
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/node_modules ./node_modules
+# standalone 出力（必要最小限の node_modules + server.js）
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --chown=nextjs:nodejs docker-signal-entry.cjs ./
 
 USER nextjs
 EXPOSE 3000
 ENV PORT 3000
 ENV HOSTNAME "0.0.0.0"
-CMD ["node_modules/.bin/next", "start"]
+CMD ["node", "docker-signal-entry.cjs"]
