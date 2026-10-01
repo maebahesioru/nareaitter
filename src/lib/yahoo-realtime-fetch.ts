@@ -54,25 +54,36 @@ export function pickSelfProfileImageFromYahoo(
 import { ProxyAgent, fetch as undiciFetch } from "undici";
 
 const YAHOO_DIRECT_BASE = "https://search.yahoo.co.jp/realtime/api/v1";
-/** 例: http://10.0.1.1:8888 (VM100 tinyproxy → Cloudflare WARP) */
-const YAHOO_HTTP_PROXY_URL = (() => {
+/**
+ * フォールバック出口プロキシ。カンマ区切りで複数指定でき、左から順に試す。
+ * 例: http://10.0.1.1:8888,http://192.168.1.4:8892
+ * （WARP tinyproxy → MAINPC の Mullvad 出口プロキシ。2026-10-01 に WARP と
+ *   自宅 IP が同時に Yahoo から 500 を返す障害があり、複数出口が必要になった）
+ */
+const YAHOO_HTTP_PROXY_URLS = (() => {
   const v = process.env.YAHOO_HTTP_PROXY?.trim();
-  return v && /^https?:\/\//i.test(v) ? v : null;
+  if (!v) return [] as string[];
+  return v
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => /^https?:\/\//i.test(s));
 })();
 
-let httpProxyFetch: typeof fetch | null = null;
+let httpProxyFetches: Array<typeof fetch> | null = null;
 /** undici ProxyAgent 経由の fetch（初回のみ生成） */
-function getHttpProxyFetch(): typeof fetch | null {
-  if (!YAHOO_HTTP_PROXY_URL) return null;
-  if (!httpProxyFetch) {
-    const agent = new ProxyAgent({ uri: YAHOO_HTTP_PROXY_URL });
-    httpProxyFetch = ((input: string | URL, init?: RequestInit) =>
-      undiciFetch(input as Parameters<typeof undiciFetch>[0], {
-        ...(init as Parameters<typeof undiciFetch>[1]),
-        dispatcher: agent,
-      })) as unknown as typeof fetch;
+function getHttpProxyFetches(): Array<typeof fetch> {
+  if (YAHOO_HTTP_PROXY_URLS.length === 0) return [];
+  if (!httpProxyFetches) {
+    httpProxyFetches = YAHOO_HTTP_PROXY_URLS.map((uri) => {
+      const agent = new ProxyAgent({ uri });
+      return ((input: string | URL, init?: RequestInit) =>
+        undiciFetch(input as Parameters<typeof undiciFetch>[0], {
+          ...(init as Parameters<typeof undiciFetch>[1]),
+          dispatcher: agent,
+        })) as unknown as typeof fetch;
+    });
   }
-  return httpProxyFetch;
+  return httpProxyFetches;
 }
 
 const YAHOO_HEADERS = {
@@ -110,7 +121,7 @@ function noteProxyFailure(): void {
 
 async function yahooFetch(pathAndQuery: string): Promise<Response> {
   const canDirect =
-    !YAHOO_HTTP_PROXY_URL || Date.now() >= directSkippedUntil;
+    YAHOO_HTTP_PROXY_URLS.length === 0 || Date.now() >= directSkippedUntil;
   let lastRes: Response | null = null;
   let lastError: unknown = null;
 
@@ -133,21 +144,27 @@ async function yahooFetch(pathAndQuery: string): Promise<Response> {
     }
   }
 
-  const proxyFetch = getHttpProxyFetch();
-  if (proxyFetch) {
-    try {
-      const res = await proxyFetch(`${YAHOO_DIRECT_BASE}${pathAndQuery}`, {
-        headers: YAHOO_HEADERS,
-        cache: "no-store",
-        signal: AbortSignal.timeout(15000),
-      } as RequestInit);
-      if (res.ok) return res;
-      lastRes = lastRes ?? res;
-      noteProxyFailure();
-    } catch (e) {
-      lastError = lastError ?? e;
-      noteProxyFailure();
+  const proxyFetches = getHttpProxyFetches();
+  if (proxyFetches.length > 0) {
+    let anyOk = false;
+    for (const proxyFetch of proxyFetches) {
+      try {
+        const res = await proxyFetch(`${YAHOO_DIRECT_BASE}${pathAndQuery}`, {
+          headers: YAHOO_HEADERS,
+          cache: "no-store",
+          signal: AbortSignal.timeout(15000),
+        } as RequestInit);
+        if (res.ok) {
+          anyOk = true;
+          return res;
+        }
+        lastRes = lastRes ?? res;
+      } catch (e) {
+        lastError = lastError ?? e;
+      }
     }
+    // 全出口が失敗したときだけ「直接に戻る」判断をする
+    if (!anyOk) noteProxyFailure();
   }
 
   // 非 OK レスポンスは呼び出し側で HTTP ステータスを握って判断する
