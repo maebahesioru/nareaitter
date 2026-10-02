@@ -5,15 +5,21 @@ export const runtime = "nodejs";
 
 type Item = { name: string; url: string; category: string };
 
-const ALL: Item[] = (links as Item[]).filter(
-  (x) =>
+const ALL: Item[] = (links as Item[]).filter((x) => {
+  const n = (x?.name ?? "").trim();
+  return (
     x &&
     typeof x.url === "string" &&
     x.url.includes("tag=maebahesioru-22") &&
-    typeof x.name === "string" &&
-    x.name.trim().length >= 6 &&
-    !/^[\d,]+\s*ポイント/.test(x.name.trim()),
-);
+    n.length >= 4 &&
+    // 数字・記号のみ（スクレイプ時のサイズ/数量ラベル誤取得）
+    !/^[\s0-9０-９_+（）()【】\[\]\-ー.,、。]+$/.test(n) &&
+    // 同一トークン繰り返し（「7サイズ7サイズ」等）
+    !/^(.{1,6})\1+$/.test(n) &&
+    // ポイント表記
+    !/^[\d,]+\s*ポイント/.test(n)
+  );
+});
 
 /** カテゴリ別にまとめる（表示のバリエーション用） */
 const BY_CATEGORY = (() => {
