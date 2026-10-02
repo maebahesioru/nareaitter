@@ -73,6 +73,8 @@ type YahooMentionsResponse = {
     sentBlocks?: number[];
     revivalText?: string;
     revivalAt?: number;
+    burstEpisodes?: number;
+    peakDay?: { date: string; n: number };
   };
   communityWords?: string[];
   recentNewConn?: Array<{ screenName: string; displayName?: string; daysAgo?: number }>;
@@ -139,6 +141,8 @@ export function CircleApp(props: CircleAppProps = {}) {
     sentBlocks?: number[];
     revivalText?: string;
     revivalAt?: number;
+    burstEpisodes?: number;
+    peakDay?: { date: string; n: number };
   } | null>(null);
   const [promptExtras, setPromptExtras] = useState<{
     selfEmojis?: string[];

@@ -263,6 +263,25 @@ export async function buildYahooPayload(
     }
     const sentBlocks = new Array<number>(6).fill(0);
     for (const t of tsSorted) sentBlocks[blockOf(new Date(t * 1000).getHours())] += 1;
+    // 連投エピソード（15分以内に3連投）
+    let burstEpisodes = 0;
+    for (let i = 2; i < tsSorted.length; i++) {
+      if (tsSorted[i] - tsSorted[i - 2] <= 900) burstEpisodes += 1;
+    }
+    // ピーク日（最も投稿した日）
+    let peakDay: { date: string; n: number } | undefined;
+    {
+      const byDay = new Map<string, number>();
+      for (const t of tsSorted) {
+        const d = new Date(t * 1000);
+        const k = `${d.getMonth() + 1}/${d.getDate()}`;
+        byDay.set(k, (byDay.get(k) ?? 0) + 1);
+      }
+      let bestK = "";
+      let bestN = 0;
+      byDay.forEach((n, k) => { if (n > bestN) { bestN = n; bestK = k; } });
+      if (bestN >= 5) peakDay = { date: bestK, n: bestN };
+    }
     // 復活の一言（最長沈黙明けの投稿）
     let revivalText: string | undefined;
     let revivalAt: number | undefined;
@@ -363,6 +382,8 @@ export async function buildYahooPayload(
       sentBlocks,
       revivalText,
       revivalAt,
+      burstEpisodes,
+      peakDay,
     };
     const communityWords = topPhrases(toYouTexts);
     if (communityWords.length) payload.communityWords = communityWords;
@@ -466,7 +487,7 @@ function getCachedYahooPayload(name: string, buildCircle: boolean) {
   return unstable_cache(
     () => buildYahooPayload(name, buildCircle),
     [
-      "yahoo-mentions-v14",
+      "yahoo-mentions-v15",
       name.toLowerCase(),
       buildCircle ? "circle" : "counts",
     ],

@@ -11,7 +11,7 @@ function median(nums: number[]): number | undefined {
 }
 
 /** 会話履歴から返信速度を実測（自分の投稿→相手の反応 / 相手の投稿→自分の反応・中央値・分） */
-function replySpeeds(hist: HistItem[]): { themMin?: number; meMin?: number } {
+function replySpeeds(hist: HistItem[]): { themMin?: number; meMin?: number; themSec?: number; meSec?: number } {
   if (hist.length < 2) return {};
   const sorted = [...hist].sort((a, b) => a.t - b.t);
   const themGaps: number[] = [];
@@ -30,7 +30,8 @@ function replySpeeds(hist: HistItem[]): { themMin?: number; meMin?: number } {
     }
   }
   const toMin = (g?: number) => (g !== undefined ? Math.max(1, Math.round(g / 60)) : undefined);
-  return { themMin: toMin(median(themGaps)), meMin: toMin(median(meGaps)) };
+  const toFast = (gs: number[]) => (gs.length ? Math.max(5, Math.min(...gs)) : undefined);
+  return { themMin: toMin(median(themGaps)), meMin: toMin(median(meGaps)), themSec: toFast(themGaps), meSec: toFast(meGaps) };
 }
 
 /** 無制限並列だと FixTweet 系 API が 429 になり再試行で遅延が積む（実測: 28並列までは429なし・63req/s） */
@@ -200,6 +201,8 @@ export async function yahooAggregatesToCircleUsers(
         keigoRate: keepDeep ? r.keigo : undefined,
         replyThemMin: keepDeep ? speeds.themMin : undefined,
         replyMeMin: keepDeep ? speeds.meMin : undefined,
+        fastestThemSec: keepDeep ? speeds.themSec : undefined,
+        fastestMeSec: keepDeep ? speeds.meSec : undefined,
         exchange: keepTop5 && r.hist.length ? r.hist.slice(0, 6).map((h) => ({ t: h.t, dir: h.dir, text: h.text })) : undefined,
         firstInteractionAt:
           keepContext && r.first && r.first > 0

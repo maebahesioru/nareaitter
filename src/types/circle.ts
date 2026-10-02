@@ -50,6 +50,10 @@ export type CircleUser = {
   weekly?: number[];
   /** 相手の敬語率 0-100（上位20人のみ） */
   keigoRate?: number;
+  /** 最速レス 相手→自分（秒・上位20人のみ） */
+  fastestThemSec?: number;
+  /** 最速レス 自分→相手（秒・上位20人のみ） */
+  fastestMeSec?: number;
   /** 自分→相手の返信速度（中央値・分・上位20人のみ） */
   replyMeMin?: number;
   /** 直近のやり取りの流れ（上位5人のみ・新しい順） */

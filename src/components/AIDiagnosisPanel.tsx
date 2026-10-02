@@ -35,6 +35,8 @@ type Props = {
     sentBlocks?: number[];
     revivalText?: string;
     revivalAt?: number;
+    burstEpisodes?: number;
+    peakDay?: { date: string; n: number };
   } | null;
   /** その他の文脈（絵文字・最近のメンション・送信トップ） */
   extras?: {

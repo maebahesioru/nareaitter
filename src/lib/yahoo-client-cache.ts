@@ -30,6 +30,8 @@ export type YahooCircleClientCache = {
     sentBlocks?: number[];
     revivalText?: string;
     revivalAt?: number;
+    burstEpisodes?: number;
+    peakDay?: { date: string; n: number };
   };
   communityWords?: string[];
   selfStyle?: {

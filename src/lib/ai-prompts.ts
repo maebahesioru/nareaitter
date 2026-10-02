@@ -116,6 +116,17 @@ function fmtTs(t: number): string {
   return `${mm}/${dd} ${hh}:${mi}`;
 }
 
+function fmtSec(s: number): string {
+  return s < 90 ? `${s}秒` : `${Math.round(s / 60)}分`;
+}
+
+function daysSinceTs(iso?: string): number | undefined {
+  if (!iso) return undefined;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return undefined;
+  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
+}
+
 function hourLabel(h: number): string {
   const type = h >= 22 || h <= 4 ? "夜型" : h >= 5 && h <= 9 ? "朝型" : "日中〜夕方型";
   return `${type}（${h}時台中心）`;
@@ -141,6 +152,8 @@ export type SelfActivity = {
   sentBlocks?: number[];
   revivalText?: string;
   revivalAt?: number;
+  burstEpisodes?: number;
+  peakDay?: { date: string; n: number };
 };
 
 function fmtDate(iso?: string): string {
@@ -259,6 +272,12 @@ function buildSelfSection(
           : `After longest silence (${selfActivity.maxSilenceDays}d): "${selfActivity.revivalText}"`,
       );
     }
+    if (selfActivity.burstEpisodes !== undefined && selfActivity.burstEpisodes > 0) {
+      activityLines.push(isJa ? `連投エピソード(15分以内に3連投): ${selfActivity.burstEpisodes}回` : `Burst episodes: ${selfActivity.burstEpisodes}`);
+    }
+    if (selfActivity.peakDay) {
+      activityLines.push(isJa ? `最も投稿が多かった日: ${selfActivity.peakDay.date}（${selfActivity.peakDay.n}件）` : `Peak day: ${selfActivity.peakDay.date} (${selfActivity.peakDay.n})`);
+    }
   }
   const tweetList = (selfTweets ?? []).map((t) => `- 「${t}」`).join("\n");
   const bioLine = self.profileDescription ? `\nプロフィール文: 「${self.profileDescription}」` : "";
@@ -289,7 +308,9 @@ function userLine(u: CircleUser, idx: number, isJa: boolean, selfTopHour?: numbe
       ? `・交流期間 ${fmtDate(u.firstInteractionAt)}〜${fmtDate(u.lastInteractionAt)}`
       : "";
   const trend = trendLabel(u, isJa);
-  const head = `  ${idx + 1}. @${u.screenName}（${name}メンション計 ${u.interactionCount ?? "?"}（相手→自分 ${u.mentionsReceived ?? "?"}・自分→相手 ${u.mentionsSent ?? "?"}）${span}${trend ? `・${trend}` : ""}）`;
+  const ds = daysSinceTs(u.lastInteractionAt);
+  const lastBit = ds === undefined ? "" : ds === 0 ? (isJa ? "・最終交流: 今日" : "・last: today") : ds === 1 ? (isJa ? "・最終交流: 昨日" : "・last: yesterday") : isJa ? `・最終交流から${ds}日` : `・last: ${ds}d ago`;
+  const head = `  ${idx + 1}. @${u.screenName}（${name}メンション計 ${u.interactionCount ?? "?"}（相手→自分 ${u.mentionsReceived ?? "?"}・自分→相手 ${u.mentionsSent ?? "?"}）${span}${lastBit}${trend ? `・${trend}` : ""}）`;
   const lines = [head];
   const facts: string[] = [];
   if (u.bio) facts.push(`bio「${u.bio}」`);
@@ -299,6 +320,12 @@ function userLine(u: CircleUser, idx: number, isJa: boolean, selfTopHour?: numbe
     if (u.replyThemMin !== undefined) rp.push(`相手→自分 約${u.replyThemMin}分`);
     if (u.replyMeMin !== undefined) rp.push(`自分→相手 約${u.replyMeMin}分`);
     facts.push(`返信速度(中央値): ${rp.join(" / ")}`);
+  }
+  if (u.fastestThemSec !== undefined || u.fastestMeSec !== undefined) {
+    const fr: string[] = [];
+    if (u.fastestThemSec !== undefined) fr.push(isJa ? `相手→自分 ${fmtSec(u.fastestThemSec)}` : `them->me ${fmtSec(u.fastestThemSec)}`);
+    if (u.fastestMeSec !== undefined) fr.push(isJa ? `自分→相手 ${fmtSec(u.fastestMeSec)}` : `me->them ${fmtSec(u.fastestMeSec)}`);
+    facts.push(isJa ? `最速レス: ${fr.join(" / ")}` : `Fastest reply: ${fr.join(" / ")}`);
   }
   if (u.topEmojis?.length) facts.push(`絵文字: ${u.topEmojis.join(" ")}`);
   if (u.vocative) facts.push(`呼び方「${u.vocative}」`);
@@ -422,8 +449,21 @@ export function generatePrompt(
   }
 
   const ending = isJa
-    ? "\n\n【出力形式】\n1. 診断結果のタイトル\n2. 総合評価（点数または段階）\n3. 詳細な分析（箇条書き3〜5項目・各項目に実際の投稿文面を1つ以上引用）\n4. 一言アドバイス\n\n面白おかしく、占い師のような文体でお願いします。"
-    : "\n\n【Output Format】\n1. Diagnosis title\n2. Overall rating (score or grade)\n3. Detailed analysis (3-5 bullets, each citing at least one actual post text)\n4. One-line advice\n\nUse a fun, fortune-teller-like tone.";
+    ? "\n\n【出力形式】\n1. 診断結果のタイトル\n2. 総合評価（点数または段階）\n3. 詳細な分析（箇条書き3〜5項目・各項目に実際の投稿文面を1つ以上引用）\n4. 一言アドバイス\n\n面白おかしく、占い師のような文体でお願いします。\n※注意: データに示されていない具体的な出来事・場所・人間関係・本名などを創作しないこと。根拠は必ず上記データ内の文面と数値に限定してください。"
+    : "\n\n【Output Format】\n1. Diagnosis title\n2. Overall rating (score or grade)\n3. Detailed analysis (3-5 bullets, each citing at least one actual post text)\n4. One-line advice\n\nUse a fun, fortune-teller-like tone.\nNote: do NOT invent specific events, places, relationships, or real names not present in the data above; ground every claim in the provided texts and numbers.";
 
-  return base + selfSection + extrasSection + legend + "\n\n" + usersHeader + "\n" + userData + extra + ending;
+  const radar: string[] = [];
+  const cooled = users
+    .filter((u) => u.weekly && (u.weekly[3] ?? 0) >= 3 && (u.weekly[4] ?? 0) <= 1)
+    .slice(0, 3)
+    .map((u) => `- @${u.screenName}（先週${u.weekly![3]}件→今週${u.weekly![4] ?? 0}件）`);
+  const heated = users
+    .filter((u) => u.weekly && (u.weekly[4] ?? 0) >= 3 && (u.weekly[2] ?? 0) + (u.weekly[3] ?? 0) <= 2)
+    .slice(0, 3)
+    .map((u) => `- @${u.screenName}（今週${u.weekly![4]}件へ急増）`);
+  if (cooled.length) radar.push(isJa ? `【今週ぱったり止まった相手】\n${cooled.join("\n")}` : `【Went quiet this week】\n${cooled.join("\n")}`);
+  if (heated.length) radar.push(isJa ? `【急に距離が縮まった相手】\n${heated.join("\n")}` : `【Suddenly closer】\n${heated.join("\n")}`);
+  const radarSection = radar.length ? "\n\n" + radar.join("\n\n") : "";
+
+  return base + selfSection + extrasSection + legend + "\n\n" + usersHeader + "\n" + userData + radarSection + extra + ending;
 }
