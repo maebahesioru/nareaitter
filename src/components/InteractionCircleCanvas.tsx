@@ -10,6 +10,8 @@ import type { CircleUser, SelfProfile } from "@/types/circle";
 type Props = {
   self: SelfProfile;
   usersWithIcons: CircleUser[];
+  /** アイコンを描画できなかったユーザーを通知（親側で自動除外→次の候補者を繰り上げ） */
+  onMissing?: (screenNames: string[]) => void;
 };
 
 /** preview が死んでいても hd で描けるように順に試す */
@@ -291,7 +293,7 @@ function halfSelfForCanvas(W: number, nPeers: number): number {
   return W * Math.min(0.26, Math.max(0.155, 0.175 + 0.082 / s));
 }
 
-export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
+export function InteractionCircleCanvas({ self, usersWithIcons, onMissing }: Props) {
   const { t } = useLocale();
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -552,6 +554,7 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
         },
       );
 
+      const missing: string[] = [];
       for (let i = 0; i < total; i++) {
         if (cancelled) return;
         const cell = peerCells[i];
@@ -579,13 +582,16 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
           );
         } else {
           const job = perImageJobs[i];
+          let drewOk = false;
           if (job) {
             const loaded = await job;
             if (cancelled) return;
             if (loaded) {
               drawImageCoverInSquare(ctx, loaded, cell.cx, cell.cy, half);
+              drewOk = true;
             }
           }
+          if (!drewOk) missing.push(slots[i].user.screenName);
         }
         const hdJob = hdJobs[i];
         if (hdJob) {
@@ -602,6 +608,16 @@ export function InteractionCircleCanvas({ self, usersWithIcons }: Props) {
         hdJobs.filter((p): p is Promise<HTMLImageElement | null> => p !== null),
       );
       if (cancelled) return;
+
+      if (typeof window !== "undefined") {
+        (window as unknown as Record<string, unknown>).__icDebug = {
+          users: usersWithIcons.length,
+          missing,
+        };
+      }
+      if (missing.length > 0 && onMissing) {
+        onMissing(missing);
+      }
 
       // 自分を最前面に（ピアのマスは中央を避けて配置されるので1回で足りる）
       if (selfImg && self.screenName) {

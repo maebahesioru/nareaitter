@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { InteractionCircleCanvas } from "@/components/InteractionCircleCanvas";
 import { useLocale } from "@/components/LocaleProvider";
 import type { CircleUser, SelfProfile } from "@/types/circle";
@@ -13,14 +13,39 @@ type Props = {
 
 export function InteractionCircle({ self, users, maxUsers }: Props) {
   const { t } = useLocale();
+  // アイコンを描画できなかったユーザーを自動除外し、次の候補者を繰り上げる
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const handledRef = useRef<Set<string>>(new Set());
+  const passesRef = useRef(0);
+
+  useEffect(() => {
+    setExcluded(new Set());
+    handledRef.current = new Set();
+    passesRef.current = 0;
+  }, [users]);
+
+  const handleMissing = useCallback((names: string[]) => {
+    if (passesRef.current >= 3) return;
+    const fresh = names.filter((n) => !handledRef.current.has(n));
+    if (fresh.length === 0) return;
+    passesRef.current += 1;
+    for (const n of fresh) handledRef.current.add(n);
+    setExcluded((prev) => {
+      const next = new Set(prev);
+      for (const n of fresh) next.add(n);
+      return next;
+    });
+  }, []);
+
   const usersWithIcons = useMemo(
     () =>
       users
+        .filter((u) => !excluded.has(u.screenName))
         .filter((u) =>
           Boolean(u.avatarUrl?.trim() || u.avatarUrlPreview?.trim()),
         )
         .slice(0, maxUsers ?? users.length),
-    [users, maxUsers],
+    [users, maxUsers, excluded],
   );
 
   return (
@@ -33,6 +58,7 @@ export function InteractionCircle({ self, users, maxUsers }: Props) {
               <InteractionCircleCanvas
                 self={self}
                 usersWithIcons={usersWithIcons}
+                onMissing={handleMissing}
               />
             )}
             <div className="pointer-events-none absolute inset-0 z-[4] flex items-center justify-center px-3">
