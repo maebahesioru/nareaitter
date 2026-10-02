@@ -7,7 +7,6 @@ import type { CircleUser, SelfProfile, FamilyTreeNode } from "@/types/circle";
 import {
   buildFamilyTree,
   getRelationLabel,
-  getRelationEmoji,
   type ExtendedRelationType,
 } from "@/lib/family-tree";
 
@@ -54,8 +53,9 @@ function drawCropCircle(ctx: CanvasRenderingContext2D, img: HTMLImageElement, cx
 }
 
 // ── 家系図レイアウト ─────────────────────────────────────────────
-// 世代ごとの行 + 夫婦（婚姻線で接続）+ 親→子の直角バス配線。
-// 線は必ず「親の位置 → バス → 子の位置」で連続して描かれ、途中で切れない。
+// 世代ごとの行。子のクラスタは親の真下にぶら下がる（ハンギング配置）。
+// 親子線は「親の中点から縦 → 対象の範囲だけ横 → 各子へ縦」のエルボー。
+// 行全体を横断するバスは使わない。
 
 type TItem =
   | { kind: "single"; node: FamilyTreeNode; tier: ExtendedRelationType }
@@ -63,10 +63,10 @@ type TItem =
   | { kind: "selfCouple"; spouse?: FamilyTreeNode };
 
 type PlacedItem = {
-  midX: number; // 接続線の基準X（夫婦は2円の中点）
+  midX: number;
+  startY: number; // 降下線の始点（夫婦=婚姻線の高さ、単独=円の下端）
   topY: number;
-  bottomY: number;
-  isParentSource: boolean; // 下方向のバス元になる（親・叔父など）
+  tier?: ExtendedRelationType;
 };
 
 type PlacedRow = {
@@ -81,8 +81,16 @@ type PlacedRow = {
 
 type TNode = { node: FamilyTreeNode; x: number; y: number; r: number; isSelf?: boolean };
 type Couple = { x1: number; x2: number; y: number };
-type Conn = { y: number; x1: number; x2: number; drops: { x: number; y1: number; y2: number }[] };
-type Label = { x: number; y: number; text: string; align: "left" | "center" };
+type Conn = {
+  sX: number;
+  sY: number;
+  busY: number;
+  x1: number;
+  x2: number;
+  lane: 0 | 1;
+  drops: { x: number; y1: number; y2: number }[];
+};
+type Label = { x: number; y: number; text: string };
 
 type Layout = {
   rows: PlacedRow[];
@@ -90,6 +98,20 @@ type Layout = {
   labels: Label[];
   height: number;
 };
+
+const GAP_U = 1.1;   // 単独同士の間隔（r単位）
+const CGAP_U = 0.5;  // 夫婦内の間隔（狭くして「夫婦」を区別）
+
+/** T 個のターゲットを N 個のソースへ順番に割り当てる（[t0,t1)・空区間はスキップ） */
+function subranges(T: number, N: number): Array<[number, number] | null> {
+  const out: Array<[number, number] | null> = [];
+  for (let i = 0; i < N; i++) {
+    const t0 = Math.floor((i * T) / N);
+    const t1 = Math.floor(((i + 1) * T) / N);
+    out.push(t1 <= t0 ? null : [t0, Math.min(t1, T)]);
+  }
+  return out;
+}
 
 function calcLayout(tree: ReturnType<typeof buildFamilyTree>, w: number, locale: "ja" | "en"): Layout {
   const ex = tree.extendedNodes;
@@ -109,189 +131,278 @@ function calcLayout(tree: ReturnType<typeof buildFamilyTree>, w: number, locale:
   };
 
   const ggp = ex.greatGrandparent ?? [];
-  if (ggp.length) rowsSpec.push({ tier: "greatGrandparent", items: asCoupleOrSingles(ggp, "greatGrandparent") });
   const gp = ex.grandparent ?? [];
-  if (gp.length) rowsSpec.push({ tier: "grandparent", items: asCoupleOrSingles(gp, "grandparent") });
-
   const parents = ex.parent ?? [];
   const uncles = ex.uncle ?? [];
-  const parentItems: TItem[] = [];
-  if (uncles[0]) parentItems.push({ kind: "single", node: uncles[0], tier: "uncle" });
-  if (parents.length === 2) parentItems.push({ kind: "couple", nodes: [parents[0], parents[1]], tier: "parent" });
-  else if (parents.length === 1) parentItems.push({ kind: "single", node: parents[0], tier: "parent" });
-  if (uncles[1]) parentItems.push({ kind: "single", node: uncles[1], tier: "uncle" });
-  if (parentItems.length) {
-    rowsSpec.push({ tier: "parent", label: getRelationLabel("parent", locale), items: parentItems });
-  }
-
-  // 自分行: いとこ → 兄弟 → 自分+配偶者
   const cousins = ex.cousin ?? [];
   const sibs = ex.sibling ?? [];
   const spouse = (ex.spouse ?? [])[0];
+  const nephews = ex.nephew ?? [];
+  const children = ex.child ?? [];
+  const gc = ex.grandchild ?? [];
+  const ggc = ex.greatGrandchild ?? [];
+
+  if (ggp.length) rowsSpec.push({ tier: "greatGrandparent", label: getRelationLabel("greatGrandparent", locale), items: asCoupleOrSingles(ggp, "greatGrandparent") });
+  if (gp.length) rowsSpec.push({ tier: "grandparent", label: getRelationLabel("grandparent", locale), items: asCoupleOrSingles(gp, "grandparent") });
+
+  // 親世代: 叔父は左（いとこが自分の行の左に居るため）、両親は右
+  const parentItems: TItem[] = [];
+  if (uncles[0]) parentItems.push({ kind: "single", node: uncles[0], tier: "uncle" });
+  if (uncles[1]) parentItems.push({ kind: "single", node: uncles[1], tier: "uncle" });
+  if (parents.length === 2) parentItems.push({ kind: "couple", nodes: [parents[0], parents[1]], tier: "parent" });
+  else if (parents.length === 1) parentItems.push({ kind: "single", node: parents[0], tier: "parent" });
+  if (parentItems.length) rowsSpec.push({ tier: "parent", label: getRelationLabel("parent", locale), items: parentItems });
+
   const selfItems: TItem[] = [
     ...cousins.map((n) => ({ kind: "single" as const, node: n, tier: "cousin" as const })),
     ...sibs.map((n) => ({ kind: "single" as const, node: n, tier: "sibling" as const })),
     { kind: "selfCouple" as const, spouse },
   ];
-  const selfRowLabel = sibs.length ? getRelationLabel("sibling", locale) : cousins.length ? getRelationLabel("cousin", locale) : "";
-  rowsSpec.push({ tier: "selfRow", label: selfRowLabel || undefined, items: selfItems });
+  const selfRowLabel = sibs.length ? getRelationLabel("sibling", locale) : cousins.length ? getRelationLabel("cousin", locale) : getRelationLabel("self", locale);
+  rowsSpec.push({ tier: "selfRow", label: selfRowLabel, items: selfItems });
 
-  const nephews = ex.nephew ?? [];
-  const children = ex.child ?? [];
   const childItems: TItem[] = [
     ...nephews.map((n) => ({ kind: "single" as const, node: n, tier: "nephew" as const })),
     ...children.map((n) => ({ kind: "single" as const, node: n, tier: "child" as const })),
   ];
-  if (childItems.length) {
-    rowsSpec.push({ tier: "child", label: getRelationLabel(children.length ? "child" : "nephew", locale), items: childItems });
+  if (childItems.length) rowsSpec.push({ tier: "child", label: getRelationLabel(children.length ? "child" : "nephew", locale), items: childItems });
+
+  if (gc.length) rowsSpec.push({ tier: "grandchild", label: getRelationLabel("grandchild", locale), items: gc.map((n) => ({ kind: "single" as const, node: n, tier: "grandchild" as const })) });
+  if (ggc.length) rowsSpec.push({ tier: "greatGrandchild", label: getRelationLabel("greatGrandchild", locale), items: ggc.map((n) => ({ kind: "single" as const, node: n, tier: "greatGrandchild" as const })) });
+
+  // ── 2) 半径（実占有幅ベースで全行が収まるよう決定） ─────
+  const spanUnitsOf = (items: TItem[]): number => {
+    let u = 0;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const width = it.kind === "single" ? 2 : 4 + CGAP_U;
+      u += width + (i < items.length - 1 ? GAP_U : 0);
+    }
+    return u;
+  };
+  let r = 26;
+  for (const spec of rowsSpec) {
+    const spanU = spanUnitsOf(spec.items);
+    if (spanU > 0) r = Math.min(r, (w - M * 2) / spanU);
   }
+  r = Math.max(10.5, Math.min(26, r));
+  const gap = r * GAP_U;
+  const coupleGap = r * CGAP_U;
+  const nameFs = Math.max(8, Math.min(11, r * 0.44));
+  const rowStep = r * 2 + nameFs + r * 2.6;
 
-  const gc = ex.grandchild ?? [];
-  if (gc.length) rowsSpec.push({ tier: "grandchild", items: gc.map((n) => ({ kind: "single" as const, node: n, tier: "grandchild" as const })) });
-  const ggc = ex.greatGrandchild ?? [];
-  if (ggc.length) rowsSpec.push({ tier: "greatGrandchild", items: ggc.map((n) => ({ kind: "single" as const, node: n, tier: "greatGrandchild" as const })) });
+  const widthOf = (it: TItem): number => (it.kind === "single" ? 2 * r : 4 * r + coupleGap);
 
-  // ── 2) 半径と行高（全行が横幅に収まるよう半径を決める） ─────────
-  const unitsOf = (items: TItem[]) => items.reduce((acc, it) => acc + (it.kind === "couple" || it.kind === "selfCouple" ? 2.4 : 1), 0);
-  let maxUnits = 3.2;
-  for (const r of rowsSpec) maxUnits = Math.max(maxUnits, unitsOf(r.items) + (r.items.length - 1) * 0.85 + 0.4);
-  const r = Math.max(13, Math.min(27, (w - M * 2) / maxUnits));
-  const gap = r * 0.85;
-  const coupleGap = r * 1.05;
-  const nameFs = Math.max(8, Math.min(11, r * 0.42));
-  const rowStep = r * 2 + nameFs + r * 2.2;
-
-  // ── 3) 配置 ────────────────────────────────
+  // ── 3) 配置（ハンギング） ─────────────────────
   const rows: PlacedRow[] = [];
   const couples: Couple[] = [];
-  const allNodes: TNode[] = [];
   const labels: Label[] = [];
-  let y = M + r;
+  const placedByTier = new Map<string, PlacedItem[]>();
+  let y = M + r + 20;
 
-  for (const spec of rowsSpec) {
+  const packRow = (items: TItem[], desired?: number[]): number[] => {
+    const widths = items.map(widthOf);
+    const lefts: number[] = [];
+    let x = M;
+    for (let i = 0; i < items.length; i++) {
+      const want = desired && Number.isFinite(desired[i]) ? desired[i] - widths[i] / 2 : x;
+      const left = Math.max(x, want);
+      lefts.push(left);
+      x = left + widths[i] + gap;
+    }
+    const end = lefts.length ? lefts[lefts.length - 1] + widths[widths.length - 1] : M;
+    if (end > w - M) {
+      const shift = end - (w - M);
+      const newStart = lefts[0] - shift;
+      if (newStart >= M - 0.5) {
+        for (let i = 0; i < lefts.length; i++) lefts[i] -= shift;
+      } else {
+        // 均等配置フォールバック
+        const totalW = widths.reduce((a, b) => a + b, 0) + gap * Math.max(0, items.length - 1);
+        let sx = Math.max(M, w / 2 - totalW / 2);
+        for (let i = 0; i < items.length; i++) {
+          lefts[i] = sx;
+          sx += widths[i] + gap;
+        }
+      }
+    }
+    return lefts;
+  };
+
+  // グループ中央揃え: ソースの真下に「グループ全体」をセンタリングする
+  const desiredCenteredFor = (
+    widths: number[],
+    from: number,
+    to: number,
+    sources: PlacedItem[] | undefined,
+  ): number[] => {
+    const out = new Array<number>(to - from).fill(NaN);
+    if (!sources || !sources.length || to <= from) return out;
+    const T = to - from;
+    const subs = subranges(T, sources.length);
+    subs.forEach((sr, i) => {
+      if (!sr) return;
+      const [a, b] = sr;
+      let gw = 0;
+      for (let k = a; k < b; k++) gw += widths[from + k] + (k < b - 1 ? gap : 0);
+      let left = sources[i].midX - gw / 2;
+      for (let k = a; k < b; k++) {
+        out[k] = left + widths[from + k] / 2;
+        left += widths[from + k] + gap;
+      }
+    });
+    for (let k = 0; k < T; k++) if (!Number.isFinite(out[k])) out[k] = k > 0 ? out[k - 1] : NaN;
+    for (let k = T - 1; k >= 0; k--) if (!Number.isFinite(out[k])) out[k] = k < T - 1 ? out[k + 1] : NaN;
+    return out;
+  };
+
+  for (let ri = 0; ri < rowsSpec.length; ri++) {
+    const spec = rowsSpec[ri];
     const items = spec.items;
-    const units = unitsOf(items) + (items.length - 1) * 0.85;
-    let x = w / 2 - (units * r) / 2;
+    const widths = items.map(widthOf);
+
+    // 希望中心を決める
+    let desired: number[] | undefined;
+    if (ri === 0) {
+      // 先頭行は中央揃えの均等配置
+      const totalW = widths.reduce((a, b) => a + b, 0) + gap * Math.max(0, items.length - 1);
+      let sx = w / 2 - totalW / 2;
+      desired = items.map((_, i) => {
+        const c = sx + widths[i] / 2;
+        sx += widths[i] + gap;
+        return c;
+      });
+    } else if (spec.tier === "selfRow") {
+      const uncleSrc = (placedByTier.get("parent") ?? []).filter((it) => it.tier === "uncle");
+      const parentSrc = (placedByTier.get("parent") ?? []).filter((it) => it.tier === "parent");
+      const dCous = desiredCenteredFor(widths, 0, cousins.length, uncleSrc.length ? uncleSrc : parentSrc.length ? parentSrc : undefined);
+      const dRest = desiredCenteredFor(widths, cousins.length, items.length, parentSrc.length ? parentSrc : uncleSrc.length ? uncleSrc : undefined);
+      desired = items.map((_, i) => (i < cousins.length ? (dCous[i] ?? NaN) : (dRest[i - cousins.length] ?? NaN)));
+      if (!desired.some((v) => Number.isFinite(v))) desired = undefined;
+    } else if (spec.tier === "child") {
+      const sibSrc = (placedByTier.get("selfRow") ?? []).filter((it) => it.tier === "sibling");
+      const selfSrc = (placedByTier.get("selfRow") ?? []).filter((it) => it.tier === "self" || it.tier === "spouse");
+      const dNep = desiredCenteredFor(widths, 0, nephews.length, sibSrc.length ? sibSrc : undefined);
+      const dCh = desiredCenteredFor(widths, nephews.length, items.length, selfSrc.length ? selfSrc : undefined);
+      desired = items.map((_, i) => (i < nephews.length ? (dNep[i] ?? NaN) : (dCh[i - nephews.length] ?? NaN)));
+      if (!desired.some((v) => Number.isFinite(v))) desired = undefined;
+    } else {
+      // ggp→gp→parent→gc→ggc: 直前の行から
+      const prev = rows[rows.length - 1];
+      desired = desiredCenteredFor(widths, 0, items.length, prev?.items);
+    }
+
+    const lefts = packRow(items, desired);
+
+    // 実体化
     const rowNodes: TNode[] = [];
     const rowCouples: Couple[] = [];
     const placed: PlacedItem[] = [];
-    const isParentRow = spec.tier === "parent";
-    const isAncestorRow = spec.tier === "greatGrandparent" || spec.tier === "grandparent";
-
-    const putSingle = (node: FamilyTreeNode, tier: ExtendedRelationType): PlacedItem => {
-      const cx = x + r;
-      rowNodes.push({ node, x: cx, y, r });
-      const item: PlacedItem = { midX: cx, topY: y - r, bottomY: y + r, isParentSource: isParentRow || isAncestorRow };
-      x += r * 2 + gap;
-      return item;
-    };
-    const putCouple = (a: FamilyTreeNode, b: FamilyTreeNode, tier: ExtendedRelationType): PlacedItem => {
-      const ax = x + r;
-      const bx = ax + r * 2 + coupleGap;
-      rowNodes.push({ node: a, x: ax, y, r });
-      rowNodes.push({ node: b, x: bx, y, r });
-      rowCouples.push({ x1: ax + r, x2: bx - r, y });
-      x = bx + r + gap;
-      return { midX: (ax + bx) / 2, topY: y - r, bottomY: y, isParentSource: isParentRow || isAncestorRow };
-    };
-
-    for (const it of items) {
-      if (it.kind === "single") placed.push(putSingle(it.node, it.tier));
-      else if (it.kind === "couple") placed.push(putCouple(it.nodes[0], it.nodes[1], it.tier));
-      else {
-        // selfCouple
-        const ax = x + r;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const left = lefts[i];
+      if (it.kind === "single") {
+        const cx = left + r;
+        rowNodes.push({ node: it.node, x: cx, y, r });
+        placed.push({ midX: cx, startY: y + r, topY: y - r, tier: it.tier });
+      } else if (it.kind === "couple") {
+        const ax = left + r;
+        const bx = ax + 2 * r + coupleGap;
+        rowNodes.push({ node: it.nodes[0], x: ax, y, r });
+        rowNodes.push({ node: it.nodes[1], x: bx, y, r });
+        rowCouples.push({ x1: ax + r, x2: bx - r, y });
+        placed.push({ midX: (ax + bx) / 2, startY: y, topY: y, tier: it.tier });
+      } else {
+        const ax = left + r;
         rowNodes.push({ node: tree.root, x: ax, y, r, isSelf: true });
         if (it.spouse) {
-          const bx = ax + r * 2 + coupleGap;
+          const bx = ax + 2 * r + coupleGap;
           rowNodes.push({ node: it.spouse, x: bx, y, r });
           rowCouples.push({ x1: ax + r, x2: bx - r, y });
-          placed.push({ midX: (ax + bx) / 2, topY: y - r, bottomY: y + r, isParentSource: false });
-          x = bx + r + gap;
+          placed.push({ midX: (ax + bx) / 2, startY: y, topY: y, tier: "spouse" });
         } else {
-          placed.push({ midX: ax, topY: y - r, bottomY: y + r, isParentSource: false });
-          x = ax + r + gap;
+          placed.push({ midX: ax, startY: y + r, topY: y - r, tier: "self" });
         }
       }
     }
 
     rows.push({ tier: spec.tier, label: spec.label, y, radius: r, items: placed, nodes: rowNodes, couples: rowCouples });
-    for (const n of rowNodes) allNodes.push(n);
+    placedByTier.set(spec.tier, placed);
     for (const c of rowCouples) couples.push(c);
-    if (spec.label) {
-      labels.push({ x: M, y, text: spec.label, align: "left" });
-    }
+    if (spec.label) labels.push({ x: M, y: y - r - 9 - nameFs / 2, text: spec.label });
     y += rowStep;
   }
 
-  // ── 4) 接続（バス配線） ─────────────────────
+  // ── 4) エルボー配線 ──────────────────────────
   const conns: Conn[] = [];
-  const rowByTier = (tier: string) => rows.find((rr) => rr.tier === tier);
 
-  const connect = (sources: PlacedItem[], targets: PlacedItem[], srcBottomLimit: number, tgtTopLimit: number) => {
+  // lane 0 = 主系統（親→子）、lane 1 = 副系統（叔父→いとこ等）。
+  // 行間の上下に分けてレーンを固定し、線の融合を防ぐ。
+  const connectMapped = (sources: PlacedItem[], targets: PlacedItem[], lane: 0 | 1 = 0) => {
     if (!sources.length || !targets.length) return;
-    const busY = (srcBottomLimit + tgtTopLimit) / 2;
-    const xs = [...sources.map((s) => s.midX), ...targets.map((t) => t.midX)];
-    const x1 = Math.min(...xs);
-    const x2 = Math.max(...xs);
-    const drops: Conn["drops"] = [];
-    for (const s of sources) drops.push({ x: s.midX, y1: s.bottomY, y2: busY });
-    for (const t of targets) drops.push({ x: t.midX, y1: busY, y2: t.topY });
-    conns.push({ y: busY, x1, x2, drops });
+    const T = targets.length;
+    const tTopMin = Math.min(...targets.map((t) => t.topY));
+    const sStartMax = Math.max(...sources.map((s) => s.startY));
+    const gapH = Math.max(20, tTopMin - sStartMax);
+    const busY = sStartMax + gapH * (lane === 0 ? 0.55 : 0.16);
+    const subs = subranges(T, sources.length);
+    subs.forEach((sr, i) => {
+      if (!sr) return;
+      const sub = targets.slice(sr[0], sr[1]);
+      if (!sub.length) return;
+      const s = sources[i];
+      const xs = [s.midX, ...sub.map((t) => t.midX)];
+      conns.push({
+        sX: s.midX,
+        sY: s.startY,
+        busY,
+        x1: Math.min(...xs),
+        x2: Math.max(...xs),
+        lane,
+        drops: sub.map((t) => ({ x: t.midX, y1: busY, y2: t.topY })),
+      });
+    });
   };
 
-  // 祖先チェーン: 曽祖父 → 祖父 → 親世代
-  const ggpRow = rowByTier("greatGrandparent");
-  const gpRow = rowByTier("grandparent");
-  const parentRow = rowByTier("parent");
-  if (ggpRow && gpRow) connect(ggpRow.items, gpRow.items, ggpRow.y + ggpRow.radius, gpRow.y - gpRow.radius);
-  if (gpRow && parentRow) connect(gpRow.items, parentRow.items, gpRow.y + gpRow.radius, parentRow.y - parentRow.radius);
+  const ggpRow = rows.find((rr) => rr.tier === "greatGrandparent");
+  const gpRow = rows.find((rr) => rr.tier === "grandparent");
+  const parentRow = rows.find((rr) => rr.tier === "parent");
+  const selfRow = rows.find((rr) => rr.tier === "selfRow")!;
+  const childRow = rows.find((rr) => rr.tier === "child");
+  const gcRow = rows.find((rr) => rr.tier === "grandchild");
+  const ggcRow = rows.find((rr) => rr.tier === "greatGrandchild");
 
-  const selfRow = rowByTier("selfRow")!;
-  // 親（夫婦/単独）→ 兄弟 + 自分
-  if (parentRow) {
-    const parentSrc = parentRow.items.filter((it) => it.isParentSource);
-    const selfAndSibs = selfRow.items.filter((_, idx) => idx >= (selfRow.items.length - 1) || true); // 全 items のうち self と sibling は後ろ側
-    void selfAndSibs;
-    const childTargets = selfRow.items.slice(Math.max(0, selfRow.items.length - 1 - (ex.sibling ?? []).length));
-    // ↑ 自分+兄弟（いとこは除く）
-    connect(parentSrc, childTargets, parentRow.y + parentRow.radius, selfRow.y - selfRow.radius);
-  }
-  // 叔父 → いとこ
-  if (parentRow && cousins.length) {
-    const uncleSrc = parentRow.items.filter((it, i) => {
-      const spec = parentRow.nodes;
-      void spec;
-      void i;
-      return it.isParentSource && !parentRow.couples.some((c) => c.y === it.topY && c.x1 < it.midX + 1 && c.x2 > it.midX - 1);
-    });
-    const cousinTargets = selfRow.items.slice(0, cousins.length);
-    if (uncleSrc.length && cousinTargets.length) connect(uncleSrc, cousinTargets, parentRow.y + parentRow.radius, selfRow.y - selfRow.radius - r * 0.7);
+  if (ggpRow && gpRow) connectMapped(ggpRow.items, gpRow.items);
+  if (gpRow && parentRow) connectMapped(gpRow.items, parentRow.items);
+
+  const parentSrc = parentRow ? parentRow.items.filter((it) => it.tier === "parent") : [];
+  const selfTargets = selfRow.items.filter((it) => it.tier === "sibling" || it.tier === "self" || it.tier === "spouse");
+  const cousinTargets = selfRow.items.filter((it) => it.tier === "cousin");
+
+  if (parentRow && parentSrc.length) connectMapped(parentSrc, selfTargets);
+
+  if (parentRow && cousinTargets.length) {
+    const uncleSrc = parentRow.items.filter((it) => it.tier === "uncle");
+    if (uncleSrc.length) connectMapped(uncleSrc, cousinTargets, 1);
   }
 
-  // 自分夫婦 → 子ども（甥は除く）
-  const childRow = rowByTier("child");
   if (childRow) {
-    const selfCoupleItem = selfRow.items[selfRow.items.length - 1];
-    const childTargets = childRow.items.slice(nephews.length);
-    if (childTargets.length) connect([selfCoupleItem], childTargets, selfRow.y + selfRow.radius, childRow.y - childRow.radius);
-    // 兄弟 → 甥・姪
-    if (nephews.length) {
-      const sibItems = selfRow.items.slice(cousins.length, cousins.length + sibs.length);
-      const nephewTargets = childRow.items.slice(0, nephews.length);
-      if (sibItems.length && nephewTargets.length) {
-        connect(sibItems, nephewTargets, selfRow.y + selfRow.radius, childRow.y - childRow.radius - r * 0.7);
-      }
-    }
+    const selfCoupleItem = selfRow.items.filter((it) => it.tier === "self" || it.tier === "spouse");
+    const realChildren = childRow.items.filter((it) => it.tier === "child");
+    const nephewItems = childRow.items.filter((it) => it.tier === "nephew");
+    if (selfCoupleItem.length && realChildren.length) connectMapped(selfCoupleItem, realChildren);
+    const sibItems = selfRow.items.filter((it) => it.tier === "sibling");
+    if (sibItems.length && nephewItems.length) connectMapped(sibItems, nephewItems, 1);
   }
 
-  // 子ども → 孫 → 曽孫（グループバス）
-  const gcRow = rowByTier("grandchild");
-  const ggcRow = rowByTier("greatGrandchild");
-  if (childRow && gcRow) connect(childRow.items, gcRow.items, childRow.y + childRow.radius, gcRow.y - gcRow.radius);
-  if (gcRow && ggcRow) connect(gcRow.items, ggcRow.items, gcRow.y + gcRow.radius, ggcRow.y - ggcRow.radius);
+  if (childRow && gcRow) {
+    const realChildren = childRow.items.filter((it) => it.tier === "child");
+    if (realChildren.length) connectMapped(realChildren, gcRow.items);
+  }
+  if (gcRow && ggcRow) connectMapped(gcRow.items, ggcRow.items);
 
-  const height = Math.max(420, Math.round(y - rowStep + r + M + nameFs * 2.5 + 40));
+  const lastRowY = y - rowStep;
+  const height = Math.max(420, Math.round(lastRowY + r + nameFs * 2.2 + M + 34));
 
   return { rows, conns, labels, height };
 }
@@ -349,25 +460,30 @@ export function FamilyTreeCanvas({ self, users }: Props) {
       const txt = isDark ? "#e4e4e7" : "#18181b";
       const sub = isDark ? "#a1a1aa" : "#52525b";
       const lbg = isDark ? "#27272a" : "#e4e4e7";
-      const lc = isDark ? "#52525b" : "#94a3b8";
+      const lc = isDark ? "#71717a" : "#94a3b8";
       const bc = isDark ? "#52525b" : "#cbd5e1";
       const rootRing = isDark ? "#a1a1aa" : "#71717a";
-      const mlc = isDark ? "#8b8b95" : "#64748b";
+      const mlc = isDark ? "#b0b0ba" : "#64748b";
 
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, W, H);
 
       const layout = calcLayout(tree, W, locale as "ja" | "en");
 
-      // ── 接続線（直角バス）── 先に描いてノードで覆う
+      // 配線（エルボー）
       ctx.strokeStyle = lc;
       ctx.fillStyle = lc;
       ctx.lineWidth = 1.4;
-      ctx.globalAlpha = 0.6;
+      ctx.globalAlpha = 0.75;
       for (const c of layout.conns) {
+        ctx.lineWidth = c.lane === 1 ? 1.1 : 1.4;
         ctx.beginPath();
-        ctx.moveTo(c.x1, c.y);
-        ctx.lineTo(c.x2, c.y);
+        ctx.moveTo(c.sX, c.sY);
+        ctx.lineTo(c.sX, c.busY);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(c.x1, c.busY);
+        ctx.lineTo(c.x2, c.busY);
         ctx.stroke();
         for (const d of c.drops) {
           ctx.beginPath();
@@ -375,18 +491,12 @@ export function FamilyTreeCanvas({ self, users }: Props) {
           ctx.lineTo(d.x, d.y2);
           ctx.stroke();
         }
-        // 接続点ドット（合流点の明示）
-        for (const d of c.drops) {
-          ctx.beginPath();
-          ctx.arc(d.x, c.y, 2, 0, Math.PI * 2);
-          ctx.fill();
-        }
       }
-      // 婚姻線（夫婦の二重線）
+      // 婚姻線
       for (const row of layout.rows) {
         ctx.strokeStyle = mlc;
         ctx.fillStyle = mlc;
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 2.6;
         ctx.globalAlpha = 1;
         for (const cp of row.couples) {
           ctx.beginPath();
@@ -394,17 +504,16 @@ export function FamilyTreeCanvas({ self, users }: Props) {
           ctx.lineTo(cp.x2, cp.y);
           ctx.stroke();
           ctx.beginPath();
-          ctx.arc((cp.x1 + cp.x2) / 2, cp.y, 2.6, 0, Math.PI * 2);
+          ctx.arc((cp.x1 + cp.x2) / 2, cp.y, 2.4, 0, Math.PI * 2);
           ctx.fill();
         }
-        ctx.strokeStyle = lc;
-        ctx.fillStyle = lc;
-        ctx.lineWidth = 1.4;
-        ctx.globalAlpha = 0.6;
       }
+      ctx.strokeStyle = lc;
+      ctx.fillStyle = lc;
+      ctx.lineWidth = 1.4;
       ctx.globalAlpha = 1;
 
-      // ── ノード描画 ──
+      // ノード
       const imgCache = new Map<string, HTMLImageElement>();
       const load = async (url?: string) => {
         if (!url?.trim()) return null;
@@ -418,11 +527,15 @@ export function FamilyTreeCanvas({ self, users }: Props) {
         }
       };
 
-      const nameFs = Math.max(8, Math.min(11, (layout.rows[0]?.radius ?? 20) * 0.42));
+      const nameFs = Math.max(8, Math.min(11, (layout.rows[0]?.radius ?? 20) * 0.44));
       for (const row of layout.rows) {
+        let ni = 0;
         for (const n of row.nodes) {
           if (cancelled) return;
-          const img = await load(n.node.user.avatarUrlPreview ?? n.node.user.avatarUrl);
+          const stagger = n.isSelf ? 0 : ni % 2;
+          ni += 1;
+          const src = n.isSelf ? (self.avatarUrlPreview ?? self.avatarUrl) : (n.node.user.avatarUrlPreview ?? n.node.user.avatarUrl);
+          const img = await load(src);
           if (img) drawCropCircle(ctx, img, n.x, n.y, n.r);
           else {
             ctx.fillStyle = isDark ? "#3f3f46" : "#d4d4d8";
@@ -436,7 +549,6 @@ export function FamilyTreeCanvas({ self, users }: Props) {
           ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
           ctx.stroke();
 
-          // 名前（自分は@ID大きめ、他人は表示名を小さく）
           const label = n.isSelf
             ? `@${self.screenName}`
             : (n.node.user.displayName || n.node.user.screenName || "");
@@ -446,25 +558,27 @@ export function FamilyTreeCanvas({ self, users }: Props) {
             ctx.fillStyle = n.isSelf ? txt : sub;
             ctx.textAlign = "center";
             let text = label;
-            const maxW = n.r * 2.6;
-            while (text.length > 3 && ctx.measureText(text).width > maxW) text = `${text.slice(0, -2)}…`;
-            ctx.fillText(text, n.x, n.y + n.r + fs + 3);
+            const maxW = n.r * 2.7;
+            while (text.length > 4 && ctx.measureText(text).width > maxW) text = `${text.slice(0, -2)}…`;
+            ctx.fillText(text, n.x, n.y + n.r + fs + 3 + stagger * (fs + 3));
             ctx.textAlign = "start";
           }
         }
       }
 
-      // ── 世代ラベル（左端）──
+      // 世代ラベル（各行の左上）
       for (const l of layout.labels) {
-        ctx.font = `bold ${Math.max(9, Math.min(11, W * 0.018))}px sans-serif`;
-        const fs = Math.max(9, Math.min(11, W * 0.018));
+        const fs = Math.max(9, Math.min(11, W * 0.016));
+        ctx.font = `bold ${fs}px sans-serif`;
         const m = ctx.measureText(l.text);
         const tw = m.width + 12;
-        const th = fs + 7;
+        const th = fs + 8;
         ctx.fillStyle = lbg;
+        ctx.globalAlpha = 0.9;
         ctx.beginPath();
         ctx.roundRect(l.x - 4, l.y - th / 2, tw, th, 5);
         ctx.fill();
+        ctx.globalAlpha = 1;
         ctx.fillStyle = sub;
         ctx.fillText(l.text, l.x + 2, l.y + fs / 2 - 1);
       }
