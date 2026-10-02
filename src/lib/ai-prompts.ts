@@ -79,6 +79,8 @@ export type SelfInfo = {
   profileDescription?: string;
 };
 
+export type OutputMode = "text" | "image";
+
 export type PromptExtras = {
   selfEmojis?: string[];
   recentMentionsToYou?: Array<{ from: string; text: string; at: number }>;
@@ -376,6 +378,7 @@ export function generatePrompt(
   selfTweets?: string[],
   selfActivity?: SelfActivity,
   extras?: PromptExtras,
+  outputMode: OutputMode = "text",
 ): string {
   const isJa = locale === "ja";
   const def = DIAGNOSIS_DEFS.find((d) => d.id === type)!;
@@ -448,9 +451,13 @@ export function generatePrompt(
       : `\n\n【Compatibility Partner】\n${partnerLine}\n\nEvaluate compatibility with this user based on mention frequency, interaction balance, and tone/style of posts. Score out of 100.`;
   }
 
-  const ending = isJa
-    ? "\n\n【出力形式】\n1. 診断結果のタイトル\n2. 総合評価（点数または段階）\n3. 詳細な分析（箇条書き3〜5項目・各項目に実際の投稿文面を1つ以上引用）\n4. 一言アドバイス\n\n面白おかしく、占い師のような文体でお願いします。\n※注意: データに示されていない具体的な出来事・場所・人間関係・本名などを創作しないこと。根拠は必ず上記データ内の文面と数値に限定してください。"
-    : "\n\n【Output Format】\n1. Diagnosis title\n2. Overall rating (score or grade)\n3. Detailed analysis (3-5 bullets, each citing at least one actual post text)\n4. One-line advice\n\nUse a fun, fortune-teller-like tone.\nNote: do NOT invent specific events, places, relationships, or real names not present in the data above; ground every claim in the provided texts and numbers.";
+  const ending = outputMode === "image"
+    ? isJa
+      ? "\n\n【出力形式（画像生成プロンプト）】\nこの診断結果をX（Twitter）に貼れる「1枚の画像」にするための画像生成プロンプトを作成してください。\n\n1. 画像生成プロンプト（英語・1段落・画像生成AIにそのまま貼れる形式）\n   - 縦長 9:16 のSNS投稿用カード風\n   - 診断の雰囲気が一目で伝わる画風を診断内容に合わせて選ぶ（例: 占いカード/タロット/不気味な予言書/ラブレター風 など）\n   - このアカウントの実データ（返信速度・週次トレンド・絵文字・呼称・活動時間帯・頻出ワードなど）から視覚的モチーフを1つ以上必ず反映すること\n2. 画像内に入れる日本語テキスト（タイトル+短い一言・各20字以内。画像内で長文は潰れるため短く）\n3. 投稿キャプション（日本語・1行・ハッシュタグなし）\n\n面白おかしく、占い師のような文体で。診断の根拠になったデータの数字を、キャプションか画像内テキストに1つ以上入れること。\n※注意: データに示されていない具体的な出来事・場所・人間関係・本名などを創作しないこと。根拠は必ず上記データ内の文面と数値に限定してください。"
+      : "\n\n【Output Format (image generation prompt)】\nCreate an image-generation prompt that turns this diagnosis into a single shareable image for X (Twitter).\n\n1. Image generation prompt (English, one paragraph, ready to paste into an image AI)\n   - Vertical 9:16 card for social posting\n   - Choose a visual style fitting the diagnosis (fortune card / tarot / eerie prophecy / love letter, etc.)\n   - Include at least one visual motif drawn from this account's real data (reply speed, weekly trend, emojis, nickname, active hours, frequent words)\n2. Japanese text to render inside the image (title + one-liner, <=20 chars each)\n3. Post caption (Japanese, one line, no hashtags)\n\nUse a fun, fortune-teller tone. Include at least one real number from the analysis in the caption or in-image text.\nNote: do NOT invent specific events, places, relationships, or real names not present in the data above; ground every claim in the provided texts and numbers."
+    : isJa
+      ? "\n\n【出力形式】\n1. 診断結果のタイトル\n2. 総合評価（点数または段階）\n3. 詳細な分析（箇条書き3〜5項目・各項目に実際の投稿文面を1つ以上引用）\n4. 一言アドバイス\n\n面白おかしく、占い師のような文体でお願いします。\n※注意: データに示されていない具体的な出来事・場所・人間関係・本名などを創作しないこと。根拠は必ず上記データ内の文面と数値に限定してください。"
+      : "\n\n【Output Format】\n1. Diagnosis title\n2. Overall rating (score or grade)\n3. Detailed analysis (3-5 bullets, each citing at least one actual post text)\n4. One-line advice\n\nUse a fun, fortune-teller-like tone.\nNote: do NOT invent specific events, places, relationships, or real names not present in the data above; ground every claim in the provided texts and numbers.";
 
   const radar: string[] = [];
   const cooled = users

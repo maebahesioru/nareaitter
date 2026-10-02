@@ -7,6 +7,7 @@ import {
   DIAGNOSIS_DEFS,
   generatePrompt,
   type DiagnosisType,
+  type OutputMode,
 } from "@/lib/ai-prompts";
 
 type Props = {
@@ -69,6 +70,7 @@ export function AIDiagnosisPanel({ self, users, selfTweets, selfActivity, extras
   const [selected, setSelected] = useState<DiagnosisType | null>(null);
   const [partner, setPartner] = useState("");
   const [copied, setCopied] = useState(false);
+  const [outputMode, setOutputMode] = useState<OutputMode>("text");
 
   const prompt = useMemo(() => {
     if (!selected || !self.screenName) return "";
@@ -81,8 +83,9 @@ export function AIDiagnosisPanel({ self, users, selfTweets, selfActivity, extras
       selfTweets,
       selfActivity ?? undefined,
       extras ?? undefined,
+      outputMode,
     );
-  }, [selected, self, users, partner, locale, selfTweets, selfActivity, extras]);
+  }, [selected, self, users, partner, locale, selfTweets, selfActivity, extras, outputMode]);
 
   const handleCopy = useCallback(async () => {
     try {
@@ -118,6 +121,38 @@ export function AIDiagnosisPanel({ self, users, selfTweets, selfActivity, extras
             </p>
           </button>
         ))}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+          {locale === "ja" ? "出力形式:" : "Output:"}
+        </span>
+        {(
+          [
+            { id: "text", ja: "テキスト診断", en: "Text diagnosis" },
+            { id: "image", ja: "画像プロンプト（SNS向け）", en: "Image prompt (for SNS)" },
+          ] as const
+        ).map((m) => (
+          <button
+            key={m.id}
+            type="button"
+            onClick={() => setOutputMode(m.id)}
+            className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+              outputMode === m.id
+                ? "border-emerald-500/50 bg-emerald-50/60 text-emerald-800 dark:border-emerald-500/40 dark:bg-emerald-950/30 dark:text-emerald-200"
+                : "border-zinc-200/80 bg-white/70 text-zinc-600 hover:border-zinc-300 dark:border-white/10 dark:bg-zinc-900/40 dark:text-zinc-400 dark:hover:border-white/20"
+            }`}
+          >
+            {locale === "ja" ? m.ja : m.en}
+          </button>
+        ))}
+        {outputMode === "image" && (
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            {locale === "ja"
+              ? "→ 診断カード画像を作る指示。画像生成AI（Grok Imagine・ChatGPT等）にそのまま貼れる"
+              : "→ instructs an image AI to make a diagnosis card image"}
+          </span>
+        )}
       </div>
 
       {selected && def?.needsPartner && (
