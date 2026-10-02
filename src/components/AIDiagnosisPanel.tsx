@@ -31,6 +31,10 @@ type Props = {
     maxSilenceDays?: number;
     avgPostPerDay?: number;
     tone?: { thanks?: number; love?: number; tired?: number; gloomy?: number };
+    receivedBlocks?: number[];
+    sentBlocks?: number[];
+    revivalText?: string;
+    revivalAt?: number;
   } | null;
   /** その他の文脈（絵文字・最近のメンション・送信トップ） */
   extras?: {
@@ -46,6 +50,7 @@ type Props = {
       streakDays?: number;
     };
     selfVocatives?: string[];
+    recentNewConn?: Array<{ screenName: string; displayName?: string; daysAgo?: number }>;
   } | null;
 };
 

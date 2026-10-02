@@ -69,8 +69,13 @@ type YahooMentionsResponse = {
     maxSilenceDays?: number;
     avgPostPerDay?: number;
     tone?: { thanks?: number; love?: number; tired?: number; gloomy?: number };
+    receivedBlocks?: number[];
+    sentBlocks?: number[];
+    revivalText?: string;
+    revivalAt?: number;
   };
   communityWords?: string[];
+  recentNewConn?: Array<{ screenName: string; displayName?: string; daysAgo?: number }>;
   selfStyle?: {
     avgLen?: number;
     keigoRate?: number;
@@ -130,12 +135,17 @@ export function CircleApp(props: CircleAppProps = {}) {
     maxSilenceDays?: number;
     avgPostPerDay?: number;
     tone?: { thanks?: number; love?: number; tired?: number; gloomy?: number };
+    receivedBlocks?: number[];
+    sentBlocks?: number[];
+    revivalText?: string;
+    revivalAt?: number;
   } | null>(null);
   const [promptExtras, setPromptExtras] = useState<{
     selfEmojis?: string[];
     recentMentionsToYou?: Array<{ from: string; text: string; at: number }>;
     topSentTargets?: Array<{ screenName: string; displayName?: string; n: number }>;
     communityWords?: string[];
+    recentNewConn?: Array<{ screenName: string; displayName?: string; daysAgo?: number }>;
     selfStyle?: {
       avgLen?: number;
       keigoRate?: number;
@@ -170,6 +180,7 @@ export function CircleApp(props: CircleAppProps = {}) {
         communityWords: data.communityWords,
         selfStyle: data.selfStyle,
         selfVocatives: data.selfVocatives,
+        recentNewConn: data.recentNewConn,
       });
       const list = data.circleUsers ?? [];
       if (list.length === 0) {
@@ -233,6 +244,7 @@ export function CircleApp(props: CircleAppProps = {}) {
         communityWords: data.communityWords,
         selfStyle: data.selfStyle,
         selfVocatives: data.selfVocatives,
+        recentNewConn: data.recentNewConn,
         selfAvatarUrl: data.selfAvatarUrl,
         selfAvatarUrlPreview: data.selfAvatarUrlPreview,
         profileFollowers: data.profileFollowers,

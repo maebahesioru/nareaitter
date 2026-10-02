@@ -254,6 +254,32 @@ export async function buildYahooPayload(
       return Math.round((maxGap / 86400) * 10) / 10;
     })();
     const avgPostPerDay = Math.round((tsSorted.length / 35) * 10) / 10;
+    // 時間帯ブロック（朝5-9/昼10-13/夕14-18/夜19-22/深夜23-2/未明3-4）
+    const blockOf = (h: number) => (h >= 5 && h <= 9 ? 0 : h >= 10 && h <= 13 ? 1 : h >= 14 && h <= 18 ? 2 : h >= 19 && h <= 22 ? 3 : h >= 23 || h <= 2 ? 4 : 5);
+    const receivedBlocks = new Array<number>(6).fill(0);
+    for (const e of mentionsToYou) {
+      const t = e.createdAt ?? 0;
+      if (t > 0) receivedBlocks[blockOf(new Date(t * 1000).getHours())] += 1;
+    }
+    const sentBlocks = new Array<number>(6).fill(0);
+    for (const t of tsSorted) sentBlocks[blockOf(new Date(t * 1000).getHours())] += 1;
+    // 復活の一言（最長沈黙明けの投稿）
+    let revivalText: string | undefined;
+    let revivalAt: number | undefined;
+    if (tsSorted.length >= 2) {
+      let maxGap = 0;
+      let maxIdx = 1;
+      for (let i = 1; i < tsSorted.length; i++) {
+        const g = tsSorted[i] - tsSorted[i - 1];
+        if (g > maxGap) { maxGap = g; maxIdx = i; }
+      }
+      if (maxGap >= 3 * 86400) {
+        const tAfter = tsSorted[maxIdx];
+        const hit = mentionsFromYou.find((e) => (e.createdAt ?? 0) === tAfter);
+        const txt = cleanSnippet(hit?.displayText, 120);
+        if (txt) { revivalText = txt; revivalAt = tAfter; }
+      }
+    }
     const fromYouTexts = mentionsFromYou.map((e) => e.displayText ?? "");
     const toYouTexts = mentionsToYou.map((e) => e.displayText ?? "");
     // 自分の文体プロファイル
@@ -333,6 +359,10 @@ export async function buildYahooPayload(
       maxSilenceDays,
       avgPostPerDay,
       tone,
+      receivedBlocks,
+      sentBlocks,
+      revivalText,
+      revivalAt,
     };
     const communityWords = topPhrases(toYouTexts);
     if (communityWords.length) payload.communityWords = communityWords;
@@ -400,6 +430,19 @@ export async function buildYahooPayload(
     }).length;
     (payload.selfActivity as Record<string, unknown>).newConn14d = newConn14d;
     (payload.selfActivity as Record<string, unknown>).dormant14d = dormant14d;
+    // 最近知り合った相手トップ3（新しい順）
+    payload.recentNewConn = circleUsers
+      .filter((u) => {
+        const f = u.firstInteractionAt ? Date.parse(u.firstInteractionAt) : NaN;
+        return Number.isFinite(f) && nowMs - f <= d14;
+      })
+      .sort((a, b) => Date.parse(b.firstInteractionAt ?? "") - Date.parse(a.firstInteractionAt ?? ""))
+      .slice(0, 3)
+      .map((u) => ({
+        screenName: u.screenName,
+        displayName: u.displayName,
+        daysAgo: Math.max(0, Math.round((nowMs - Date.parse(u.firstInteractionAt ?? "")) / 86400000)),
+      }));
     if (selfHd?.trim()) payload.selfAvatarUrl = selfHd.trim();
     if (selfYahoo) payload.selfAvatarUrlPreview = selfYahoo;
     if (profileData) {
@@ -423,7 +466,7 @@ function getCachedYahooPayload(name: string, buildCircle: boolean) {
   return unstable_cache(
     () => buildYahooPayload(name, buildCircle),
     [
-      "yahoo-mentions-v13",
+      "yahoo-mentions-v14",
       name.toLowerCase(),
       buildCircle ? "circle" : "counts",
     ],

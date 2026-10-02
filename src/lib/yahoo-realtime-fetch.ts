@@ -490,6 +490,10 @@ export type MentionPeerAgg = {
   emojis?: string[];
   /** 最も多い活動時間帯（0-23） */
   activeHour?: number;
+  /** 週次カウント（index0=4週前〜index4=直近7日） */
+  weekCounts?: number[];
+  /** 敬語率（0-100） */
+  keigo?: number;
   /** 最初の交流時の文面（相手 or 自分側） */
   firstText?: string;
   /** 最初の交流時の文面の時刻 */
@@ -523,6 +527,7 @@ export function aggregateMentionAuthors(
   const vociCounts = new Map<string, Map<string, number>>();
   const lenSums = new Map<string, { n: number; sum: number }>();
   const laughCounts = new Map<string, { w: number; warau: number; kusa: number }>();
+  const keigoCounts = new Map<string, { n: number; k: number }>();
   for (const e of mentionsToYou) {
     const sn = (e.screenName ?? "unknown").toLowerCase();
     const t = typeof e.createdAt === "number" && e.createdAt > 0 ? e.createdAt : 0;
@@ -582,6 +587,17 @@ export function aggregateMentionAuthors(
       let hc = hourCounts.get(sn);
       if (!hc) { hc = new Array<number>(24).fill(0); hourCounts.set(sn, hc); }
       hc[new Date(t * 1000).getHours()] += 1;
+      const age = nowSec - t;
+      if (age >= 0 && age < 35 * 86400 && map[sn]) {
+        const wk = (map[sn].weekCounts ??= [0, 0, 0, 0, 0]);
+        wk[4 - Math.min(4, Math.floor(age / (7 * 86400)))] += 1;
+      }
+    }
+    if (txt) {
+      const kc = keigoCounts.get(sn) ?? { n: 0, k: 0 };
+      kc.n += 1;
+      if (/(です|ます|でした|ません|ください)/.test(txt)) kc.k += 1;
+      keigoCounts.set(sn, kc);
     }
   }
   for (const [sn, cur] of Object.entries(map)) {
@@ -589,6 +605,8 @@ export function aggregateMentionAuthors(
       cur.hist.sort((a, b) => b.t - a.t);
       cur.hist = cur.hist.slice(0, 8);
     }
+    const kc = keigoCounts.get(sn);
+    if (kc && kc.n >= 4) cur.keigo = Math.round((kc.k / kc.n) * 100);
     const em = emojiCounts.get(sn);
     if (em) cur.emojis = topEmojisOf(em);
     const hc = hourCounts.get(sn);

@@ -1,7 +1,7 @@
 import type { CircleUser } from "@/types/circle";
 
 /** セッション内で同一ユーザーの再 fetch を減らし Function Invocations を抑える */
-const KEY_PREFIX = "nareai-yahoo-v12:";
+const KEY_PREFIX = "nareai-yahoo-v13:";
 /** 鮮度とのトレードオフ。Yahoo の profile 画像 URL（rts-pctr 等）は短時間で失効しやすい */
 const TTL_MS = 8 * 60 * 1000;
 
@@ -26,6 +26,10 @@ export type YahooCircleClientCache = {
     maxSilenceDays?: number;
     avgPostPerDay?: number;
     tone?: { thanks?: number; love?: number; tired?: number; gloomy?: number };
+    receivedBlocks?: number[];
+    sentBlocks?: number[];
+    revivalText?: string;
+    revivalAt?: number;
   };
   communityWords?: string[];
   selfStyle?: {
@@ -36,6 +40,7 @@ export type YahooCircleClientCache = {
     streakDays?: number;
   };
   selfVocatives?: string[];
+  recentNewConn?: Array<{ screenName: string; displayName?: string; daysAgo?: number }>;
   profileDescription?: string;
   selfEmojis?: string[];
   recentMentionsToYou?: Array<{ from: string; text: string; at: number }>;

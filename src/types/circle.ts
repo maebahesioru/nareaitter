@@ -46,6 +46,10 @@ export type CircleUser = {
   firstFromThem?: string;
   /** 初対面時の自分の文面（上位20人のみ） */
   firstToThem?: string;
+  /** 相手の週次カウント（上位20人のみ・4週前→今週） */
+  weekly?: number[];
+  /** 相手の敬語率 0-100（上位20人のみ） */
+  keigoRate?: number;
   /** 自分→相手の返信速度（中央値・分・上位20人のみ） */
   replyMeMin?: number;
   /** 直近のやり取りの流れ（上位5人のみ・新しい順） */

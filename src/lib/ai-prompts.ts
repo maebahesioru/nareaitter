@@ -92,6 +92,7 @@ export type PromptExtras = {
     streakDays?: number;
   };
   selfVocatives?: string[];
+  recentNewConn?: Array<{ screenName: string; displayName?: string; daysAgo?: number }>;
 };
 
 function trendArrow(w: number[] | undefined, isJa: boolean): string {
@@ -136,6 +137,10 @@ export type SelfActivity = {
   maxSilenceDays?: number;
   avgPostPerDay?: number;
   tone?: { thanks?: number; love?: number; tired?: number; gloomy?: number };
+  receivedBlocks?: number[];
+  sentBlocks?: number[];
+  revivalText?: string;
+  revivalAt?: number;
 };
 
 function fmtDate(iso?: string): string {
@@ -240,6 +245,20 @@ function buildSelfSection(
       if (t.gloomy) bits.push(isJa ? `悲観${t.gloomy}%` : `gloomy ${t.gloomy}%`);
       if (bits.length) activityLines.push(isJa ? `感情語の出現率: ${bits.join("・")}` : `Emotion words: ${bits.join(", ")}`);
     }
+    if (selfActivity.receivedBlocks?.length) {
+      const bl = isJa ? ["朝", "昼", "夕", "夜", "深夜", "未明"] : ["morning", "noon", "evening", "night", "late", "dawn"];
+      const recv = selfActivity.receivedBlocks.map((n, i) => `${bl[i]}${n}`).join("・");
+      const sent = selfActivity.sentBlocks?.map((n, i) => `${bl[i]}${n}`).join("・");
+      activityLines.push(isJa ? `時間帯別(被メンション): ${recv}` : `By time (received): ${recv}`);
+      if (sent) activityLines.push(isJa ? `時間帯別(自分の投稿): ${sent}` : `By time (own posts): ${sent}`);
+    }
+    if (selfActivity.revivalText && selfActivity.maxSilenceDays && selfActivity.maxSilenceDays >= 3) {
+      activityLines.push(
+        isJa
+          ? `最長沈黙(${selfActivity.maxSilenceDays}日)明けの一言: 「${selfActivity.revivalText}」`
+          : `After longest silence (${selfActivity.maxSilenceDays}d): "${selfActivity.revivalText}"`,
+      );
+    }
   }
   const tweetList = (selfTweets ?? []).map((t) => `- 「${t}」`).join("\n");
   const bioLine = self.profileDescription ? `\nプロフィール文: 「${self.profileDescription}」` : "";
@@ -263,7 +282,7 @@ function trendLabel(u: CircleUser, isJa: boolean): string {
   return isJa ? `直近7日: ${n7}件（安定）` : `last7d: ${n7} (steady)`;
 }
 
-function userLine(u: CircleUser, idx: number, isJa: boolean, selfTopHour?: number): string {
+function userLine(u: CircleUser, idx: number, isJa: boolean, selfTopHour?: number, selfLaugh?: string): string {
   const name = u.displayName && u.displayName !== u.screenName ? `${u.displayName}／` : "";
   const span =
     u.firstInteractionAt || u.lastInteractionAt
@@ -283,12 +302,14 @@ function userLine(u: CircleUser, idx: number, isJa: boolean, selfTopHour?: numbe
   }
   if (u.topEmojis?.length) facts.push(`絵文字: ${u.topEmojis.join(" ")}`);
   if (u.vocative) facts.push(`呼び方「${u.vocative}」`);
-  if (u.avgLen !== undefined || u.laugh) {
+  if (u.avgLen !== undefined || u.laugh || u.keigoRate !== undefined) {
     const st: string[] = [];
     if (u.avgLen !== undefined) st.push(`平均${u.avgLen}字`);
-    if (u.laugh) st.push(u.laugh);
+    if (u.laugh) st.push(u.laugh + (selfLaugh && u.laugh === selfLaugh ? "（自分と同じ）" : ""));
+    if (u.keigoRate !== undefined && u.keigoRate >= 40) st.push("敬語多め");
     facts.push(`文体: ${st.join("・")}`);
   }
+  if (u.weekly?.length) facts.push(`週次: ${u.weekly.join("→")}`);
   if (u.activeHour !== undefined && selfTopHour !== undefined) {
     const diff = Math.min(Math.abs(u.activeHour - selfTopHour), 24 - Math.abs(u.activeHour - selfTopHour));
     if (diff <= 2) facts.push(isJa ? "生活リズム: 似てる" : "rhythm: similar");
@@ -314,9 +335,9 @@ function userLine(u: CircleUser, idx: number, isJa: boolean, selfTopHour?: numbe
   return lines.join("\n");
 }
 
-function buildUserDataSection(users: CircleUser[], isJa: boolean, selfTopHour?: number): string {
+function buildUserDataSection(users: CircleUser[], isJa: boolean, selfTopHour?: number, selfLaugh?: string): string {
   if (users.length === 0) return isJa ? "（データなし）" : "(no data)";
-  return users.slice(0, 25).map((u, i) => userLine(u, i, isJa, selfTopHour)).join("\n");
+  return users.slice(0, 25).map((u, i) => userLine(u, i, isJa, selfTopHour, selfLaugh)).join("\n");
 }
 
 export function generatePrompt(
@@ -336,7 +357,7 @@ export function generatePrompt(
     : `Below is 30 days of public data (mention interactions, actual post texts, activity stats, profile) for X user "@${self.screenName}".\n\nYou are an expert AI fortune teller / analyst. Based on this data, perform "${def.title.en}".\nCite the actual post texts (tone, topics, frequency) as evidence in your analysis.\n\n【What to diagnose】\n${def.desc.en}\n\n【Key angles】\n${def.hints.en}\n\n`;
 
   const selfSection = buildSelfSection(self, selfTweets, selfActivity, isJa);
-  const userData = buildUserDataSection(users, isJa, selfActivity?.topHours?.[0]);
+  const userData = buildUserDataSection(users, isJa, selfActivity?.topHours?.[0], extras?.selfStyle?.laugh);
 
   const usersHeader = isJa ? "【交流相手データ（トップ25）】" : "【Interaction partners (top 25)】";
 
@@ -364,6 +385,12 @@ export function generatePrompt(
     if (extras.selfVocatives?.length) {
       parts.push(isJa ? `【界隈の呼称傾向（メンション内でよく見る呼び方）】\n${extras.selfVocatives.join("・")}` : `【Vocative style in mentions】\n${extras.selfVocatives.join(", ")}`);
     }
+    if (extras.recentNewConn?.length) {
+      const rows = extras.recentNewConn
+        .map((n) => `- @${n.screenName}${n.displayName ? `（${n.displayName}）` : ""}: ${n.daysAgo ?? "?"}日前に知り合った`)
+        .join("\n");
+      parts.push(isJa ? `【最近知り合った相手】\n${rows}` : `【Newest connections】\n${rows}`);
+    }
     const st = extras.selfStyle;
     if (st) {
       const bits: string[] = [];
@@ -385,7 +412,7 @@ export function generatePrompt(
   if (partnerScreenName) {
     const partner = users.find((u) => u.screenName.toLowerCase() === partnerScreenName.toLowerCase());
     const partnerLine = partner
-      ? userLine(partner, 0, isJa, selfActivity?.topHours?.[0])
+      ? userLine(partner, 0, isJa, selfActivity?.topHours?.[0], extras?.selfStyle?.laugh)
       : isJa
         ? `  @${partnerScreenName}（この相手のデータは今回の取得範囲にありません）`
         : `  @${partnerScreenName} (no data in this range)`;
