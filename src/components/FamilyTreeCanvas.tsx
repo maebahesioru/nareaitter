@@ -549,10 +549,20 @@ export function FamilyTreeCanvas({ self, users }: Props) {
             : await load([n.node.user.avatarUrlPreview, n.node.user.avatarUrl, fallbackUrl]);
           if (img) drawCropCircle(ctx, img, n.x, n.y, n.r);
           else {
-            ctx.fillStyle = isDark ? "#3f3f46" : "#d4d4d8";
+            ctx.fillStyle = isDark ? "#27272a" : "#e4e4e7";
             ctx.beginPath();
             ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
             ctx.fill();
+            // 画像が存在しないアカウント（削除済み等）は頭文字入りプレースホルダー
+            const nm = (n.isSelf ? self.screenName : n.node.user.displayName || n.node.user.screenName || "?").trim();
+            const initial = [...nm][0] ?? "?";
+            ctx.font = `bold ${Math.max(12, Math.round(n.r * 0.82))}px sans-serif`;
+            ctx.fillStyle = isDark ? "#a1a1aa" : "#71717a";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(initial, n.x, n.y + n.r * 0.04);
+            ctx.textAlign = "start";
+            ctx.textBaseline = "alphabetic";
           }
           ctx.strokeStyle = n.isSelf ? rootRing : bc;
           ctx.lineWidth = n.isSelf ? 3 : 2;
