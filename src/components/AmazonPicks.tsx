@@ -123,7 +123,7 @@ export function AmazonPicks({ variant = "inline" }: Props) {
             onClick={handleClose}
             aria-label={isJa ? "広告を閉じる" : "Close ad"}
             title={isJa ? "閉じる" : "Close"}
-            className="flex h-6 w-6 items-center justify-center rounded-md text-sm leading-none text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600 dark:text-zinc-500 dark:hover:bg-white/10 dark:hover:text-zinc-300"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-zinc-300/90 bg-white/80 text-sm leading-none text-zinc-500 transition hover:border-zinc-400/70 hover:text-zinc-700 dark:border-white/15 dark:bg-zinc-800/70 dark:text-zinc-400 dark:hover:border-white/25 dark:hover:text-zinc-200"
           >
             ✕
           </button>
