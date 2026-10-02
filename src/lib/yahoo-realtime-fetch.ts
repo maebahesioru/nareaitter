@@ -490,6 +490,12 @@ export type MentionPeerAgg = {
   emojis?: string[];
   /** 最も多い活動時間帯（0-23） */
   activeHour?: number;
+  /** 相手が使いがちな呼称（「架っさん」等・さん/ちゃん系の最頻） */
+  vocative?: string;
+  /** 笑い方の癖（ｗ派/笑派/草派） */
+  laugh?: string;
+  /** 平均文字数 */
+  avgLen?: number;
 };
 
 /** テキストから絵文字を抽出（ZWJ連結・国旗ペア対応の簡易版） */
@@ -510,6 +516,9 @@ export function aggregateMentionAuthors(
   const map: Record<string, MentionPeerAgg> = {};
   const emojiCounts = new Map<string, Map<string, number>>();
   const hourCounts = new Map<string, number[]>();
+  const vociCounts = new Map<string, Map<string, number>>();
+  const lenSums = new Map<string, { n: number; sum: number }>();
+  const laughCounts = new Map<string, { w: number; warau: number; kusa: number }>();
   for (const e of mentionsToYou) {
     const sn = (e.screenName ?? "unknown").toLowerCase();
     const t = typeof e.createdAt === "number" && e.createdAt > 0 ? e.createdAt : 0;
@@ -543,6 +552,24 @@ export function aggregateMentionAuthors(
       let em = emojiCounts.get(sn);
       if (!em) { em = new Map(); emojiCounts.set(sn, em); }
       for (const ch of extractEmojis(txt)) em.set(ch, (em.get(ch) ?? 0) + 1);
+      // 呼称（さん/ちゃん系の接尾辞の前 2〜8 文字）
+      for (const m of txt.matchAll(/([^\s@＠。、！？!?…「」]{2,8})(さん|ちゃん|くん|君|氏|たん|りん|殿)/gu)) {
+        const v = m[1] + m[2];
+        let vm = vociCounts.get(sn);
+        if (!vm) { vm = new Map(); vociCounts.set(sn, vm); }
+        vm.set(v, (vm.get(v) ?? 0) + 1);
+      }
+      // 文体（文字数・笑い方）
+      const clean = txt.replace(/https?:\/\/\S+/g, "").trim();
+      if (clean) {
+        const ls = lenSums.get(sn) ?? { n: 0, sum: 0 };
+        ls.n += 1; ls.sum += clean.length; lenSums.set(sn, ls);
+      }
+      const lc = laughCounts.get(sn) ?? { w: 0, warau: 0, kusa: 0 };
+      lc.w += (txt.match(/[wｗ]{2,}/g) ?? []).length;
+      lc.warau += (txt.match(/笑/g) ?? []).length;
+      lc.kusa += (txt.match(/草/g) ?? []).length;
+      laughCounts.set(sn, lc);
     }
     if (t > 0) {
       let hc = hourCounts.get(sn);
@@ -563,6 +590,20 @@ export function aggregateMentionAuthors(
       let bestN = 0;
       hc.forEach((n, h) => { if (n > bestN) { bestN = n; best = h; } });
       if (best >= 0) cur.activeHour = best;
+    }
+    const vm = vociCounts.get(sn);
+    if (vm) {
+      let bestV = "";
+      let bestVN = 0;
+      vm.forEach((n, v) => { if (n > bestVN) { bestVN = n; bestV = v; } });
+      if (bestVN >= 2) cur.vocative = bestV;
+    }
+    const ls = lenSums.get(sn);
+    if (ls && ls.n > 0) cur.avgLen = Math.round(ls.sum / ls.n);
+    const lc = laughCounts.get(sn);
+    if (lc) {
+      const max = Math.max(lc.w, lc.warau, lc.kusa);
+      if (max >= 2) cur.laugh = max === lc.w ? "ｗ派" : max === lc.warau ? "笑派" : "草派";
     }
   }
   return map;

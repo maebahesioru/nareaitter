@@ -36,6 +36,12 @@ export type CircleUser = {
   topEmojis?: string[];
   /** 相手→自分の返信速度（中央値・分・上位20人のみ） */
   replyThemMin?: number;
+  /** 相手が使いがちな呼称（上位20人のみ） */
+  vocative?: string;
+  /** 笑い方の癖（ｗ派/笑派/草派・上位20人のみ） */
+  laugh?: string;
+  /** 平均文字数（上位20人のみ） */
+  avgLen?: number;
   /** 自分→相手の返信速度（中央値・分・上位20人のみ） */
   replyMeMin?: number;
   /** 直近のやり取りの流れ（上位5人のみ・新しい順） */

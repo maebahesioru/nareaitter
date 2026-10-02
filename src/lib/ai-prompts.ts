@@ -84,6 +84,14 @@ export type PromptExtras = {
   recentMentionsToYou?: Array<{ from: string; text: string; at: number }>;
   topSentTargets?: Array<{ screenName: string; displayName?: string; n: number }>;
   communityWords?: string[];
+  selfStyle?: {
+    avgLen?: number;
+    keigoRate?: number;
+    exclaimRate?: number;
+    laugh?: string;
+    streakDays?: number;
+  };
+  selfVocatives?: string[];
 };
 
 function trendArrow(w: number[] | undefined, isJa: boolean): string {
@@ -219,7 +227,7 @@ function trendLabel(u: CircleUser, isJa: boolean): string {
   return isJa ? `直近7日: ${n7}件（安定）` : `last7d: ${n7} (steady)`;
 }
 
-function userLine(u: CircleUser, idx: number, isJa: boolean): string {
+function userLine(u: CircleUser, idx: number, isJa: boolean, selfTopHour?: number): string {
   const name = u.displayName && u.displayName !== u.screenName ? `${u.displayName}／` : "";
   const span =
     u.firstInteractionAt || u.lastInteractionAt
@@ -238,6 +246,18 @@ function userLine(u: CircleUser, idx: number, isJa: boolean): string {
     facts.push(`返信速度(中央値): ${rp.join(" / ")}`);
   }
   if (u.topEmojis?.length) facts.push(`絵文字: ${u.topEmojis.join(" ")}`);
+  if (u.vocative) facts.push(`呼び方「${u.vocative}」`);
+  if (u.avgLen !== undefined || u.laugh) {
+    const st: string[] = [];
+    if (u.avgLen !== undefined) st.push(`平均${u.avgLen}字`);
+    if (u.laugh) st.push(u.laugh);
+    facts.push(`文体: ${st.join("・")}`);
+  }
+  if (u.activeHour !== undefined && selfTopHour !== undefined) {
+    const diff = Math.min(Math.abs(u.activeHour - selfTopHour), 24 - Math.abs(u.activeHour - selfTopHour));
+    if (diff <= 2) facts.push(isJa ? "生活リズム: 似てる" : "rhythm: similar");
+    else if (diff >= 6) facts.push(isJa ? "生活リズム: 真逆" : "rhythm: opposite");
+  }
   if (facts.length) lines.push(`      ${facts.join("・")}`);
   if (u.latestFromThem) lines.push(`      相手の最近の投稿: 「${u.latestFromThem}」`);
   if (u.latestFromThem2) lines.push(`      相手の1つ前の投稿: 「${u.latestFromThem2}」`);
@@ -252,9 +272,9 @@ function userLine(u: CircleUser, idx: number, isJa: boolean): string {
   return lines.join("\n");
 }
 
-function buildUserDataSection(users: CircleUser[], isJa: boolean): string {
+function buildUserDataSection(users: CircleUser[], isJa: boolean, selfTopHour?: number): string {
   if (users.length === 0) return isJa ? "（データなし）" : "(no data)";
-  return users.slice(0, 25).map((u, i) => userLine(u, i, isJa)).join("\n");
+  return users.slice(0, 25).map((u, i) => userLine(u, i, isJa, selfTopHour)).join("\n");
 }
 
 export function generatePrompt(
@@ -274,7 +294,7 @@ export function generatePrompt(
     : `Below is 30 days of public data (mention interactions, actual post texts, activity stats, profile) for X user "@${self.screenName}".\n\nYou are an expert AI fortune teller / analyst. Based on this data, perform "${def.title.en}".\nCite the actual post texts (tone, topics, frequency) as evidence in your analysis.\n\n【What to diagnose】\n${def.desc.en}\n\n【Key angles】\n${def.hints.en}\n\n`;
 
   const selfSection = buildSelfSection(self, selfTweets, selfActivity, isJa);
-  const userData = buildUserDataSection(users, isJa);
+  const userData = buildUserDataSection(users, isJa, selfActivity?.topHours?.[0]);
 
   const usersHeader = isJa ? "【交流相手データ（トップ25）】" : "【Interaction partners (top 25)】";
 
@@ -299,6 +319,19 @@ export function generatePrompt(
     if (extras.communityWords?.length) {
       parts.push(isJa ? `【界隈の頻出ワード（届いたメンションから）】\n${extras.communityWords.join("・")}` : `【Community frequent words】\n${extras.communityWords.join(", ")}`);
     }
+    if (extras.selfVocatives?.length) {
+      parts.push(isJa ? `【界隈の呼称傾向（メンション内でよく見る呼び方）】\n${extras.selfVocatives.join("・")}` : `【Vocative style in mentions】\n${extras.selfVocatives.join(", ")}`);
+    }
+    const st = extras.selfStyle;
+    if (st) {
+      const bits: string[] = [];
+      if (st.avgLen !== undefined) bits.push(isJa ? `平均${st.avgLen}字` : `avg ${st.avgLen} chars`);
+      if (st.keigoRate !== undefined) bits.push(isJa ? (st.keigoRate >= 40 ? "敬語多め" : st.keigoRate >= 15 ? "タメ口と敬語が混在" : "基本タメ口") : `keigo ${st.keigoRate}%`);
+      if (st.exclaimRate !== undefined) bits.push(isJa ? `！付き${st.exclaimRate}%` : `exclaims ${st.exclaimRate}%`);
+      if (st.laugh) bits.push(isJa ? `笑い方=${st.laugh}` : `laugh style=${st.laugh}`);
+      if (st.streakDays !== undefined) bits.push(isJa ? (st.streakDays > 0 ? `${st.streakDays}日連続投稿中` : "最近は投稿が途切れ気味") : `${st.streakDays} day streak`);
+      parts.push(isJa ? `【自分の文体・継続状況】\n${bits.join("・")}` : `【My writing style & streak】\n${bits.join(" · ")}`);
+    }
     if (parts.length) extrasSection = "\n\n" + parts.join("\n\n");
   }
 
@@ -310,7 +343,7 @@ export function generatePrompt(
   if (partnerScreenName) {
     const partner = users.find((u) => u.screenName.toLowerCase() === partnerScreenName.toLowerCase());
     const partnerLine = partner
-      ? userLine(partner, 0, isJa)
+      ? userLine(partner, 0, isJa, selfActivity?.topHours?.[0])
       : isJa
         ? `  @${partnerScreenName}（この相手のデータは今回の取得範囲にありません）`
         : `  @${partnerScreenName} (no data in this range)`;

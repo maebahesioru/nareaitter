@@ -66,6 +66,14 @@ type YahooMentionsResponse = {
     words?: string[];
   };
   communityWords?: string[];
+  selfStyle?: {
+    avgLen?: number;
+    keigoRate?: number;
+    exclaimRate?: number;
+    laugh?: string;
+    streakDays?: number;
+  };
+  selfVocatives?: string[];
   profileDescription?: string;
   selfEmojis?: string[];
   recentMentionsToYou?: Array<{ from: string; text: string; at: number }>;
@@ -118,6 +126,14 @@ export function CircleApp(props: CircleAppProps = {}) {
     recentMentionsToYou?: Array<{ from: string; text: string; at: number }>;
     topSentTargets?: Array<{ screenName: string; displayName?: string; n: number }>;
     communityWords?: string[];
+    selfStyle?: {
+      avgLen?: number;
+      keigoRate?: number;
+      exclaimRate?: number;
+      laugh?: string;
+      streakDays?: number;
+    };
+    selfVocatives?: string[];
   } | null>(null);
 
   const fetchYahooMentions = useCallback(async (overrideHandle?: string) => {
@@ -142,6 +158,8 @@ export function CircleApp(props: CircleAppProps = {}) {
         recentMentionsToYou: data.recentMentionsToYou,
         topSentTargets: data.topSentTargets,
         communityWords: data.communityWords,
+        selfStyle: data.selfStyle,
+        selfVocatives: data.selfVocatives,
       });
       const list = data.circleUsers ?? [];
       if (list.length === 0) {
@@ -203,6 +221,8 @@ export function CircleApp(props: CircleAppProps = {}) {
         recentMentionsToYou: data.recentMentionsToYou,
         topSentTargets: data.topSentTargets,
         communityWords: data.communityWords,
+        selfStyle: data.selfStyle,
+        selfVocatives: data.selfVocatives,
         selfAvatarUrl: data.selfAvatarUrl,
         selfAvatarUrlPreview: data.selfAvatarUrlPreview,
         profileFollowers: data.profileFollowers,

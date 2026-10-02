@@ -225,6 +225,52 @@ export async function buildYahooPayload(
     }
     const fromYouTexts = mentionsFromYou.map((e) => e.displayText ?? "");
     const toYouTexts = mentionsToYou.map((e) => e.displayText ?? "");
+    // 自分の文体プロファイル
+    const selfTextsClean = fromYouTexts.map((t) => t.replace(/https?:\/\/\S+/g, "").trim()).filter(Boolean);
+    let selfStyle: Record<string, unknown> | undefined;
+    if (selfTextsClean.length >= 5) {
+      const n = selfTextsClean.length;
+      const avgLen = Math.round(selfTextsClean.reduce((s, t) => s + t.length, 0) / n);
+      const keigoN = selfTextsClean.filter((t) => /(です|ます|でした|ません|ください)/.test(t)).length;
+      const exN = selfTextsClean.filter((t) => /[！!]/.test(t)).length;
+      let sw = 0;
+      let swarau = 0;
+      let skusa = 0;
+      for (const t of selfTextsClean) {
+        sw += (t.match(/[wｗ]{2,}/g) ?? []).length;
+        swarau += (t.match(/笑/g) ?? []).length;
+        skusa += (t.match(/草/g) ?? []).length;
+      }
+      const lmax = Math.max(sw, swarau, skusa);
+      const laugh = lmax >= 3 ? (lmax === sw ? "ｗ派" : lmax === swarau ? "笑派" : "草派") : undefined;
+      // 連続投稿日数
+      const daySet = new Set(tsSorted.map((t) => new Date(t * 1000).toDateString()));
+      let streakDays = 0;
+      const startOffset = daySet.has(new Date().toDateString()) ? 0 : 1;
+      for (let i = startOffset; i < 400; i++) {
+        const d = new Date(Date.now() - i * 86400000);
+        if (daySet.has(d.toDateString())) streakDays += 1;
+        else break;
+      }
+      selfStyle = {
+        avgLen,
+        keigoRate: Math.round((keigoN / n) * 100),
+        exclaimRate: Math.round((exN / n) * 100),
+        laugh,
+        streakDays,
+      };
+    }
+    if (selfStyle) payload.selfStyle = selfStyle;
+    // 界隈からの呼ばれ方
+    const vociGlobal = new Map<string, number>();
+    for (const t of toYouTexts) {
+      for (const m of t.matchAll(/([^\s@＠。、！？!?…「」]{2,8})(さん|ちゃん|くん|君|氏|たん|りん|殿)/gu)) {
+        const v = m[1] + m[2];
+        vociGlobal.set(v, (vociGlobal.get(v) ?? 0) + 1);
+      }
+    }
+    const selfVocatives = [...vociGlobal.entries()].filter(([, cnt]) => cnt >= 2).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([v]) => v);
+    if (selfVocatives.length) payload.selfVocatives = selfVocatives;
     payload.selfActivity = {
       topHours,
       fromYou7d,
@@ -324,7 +370,7 @@ function getCachedYahooPayload(name: string, buildCircle: boolean) {
   return unstable_cache(
     () => buildYahooPayload(name, buildCircle),
     [
-      "yahoo-mentions-v10",
+      "yahoo-mentions-v12",
       name.toLowerCase(),
       buildCircle ? "circle" : "counts",
     ],

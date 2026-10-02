@@ -33,6 +33,14 @@ type Props = {
     recentMentionsToYou?: Array<{ from: string; text: string; at: number }>;
     topSentTargets?: Array<{ screenName: string; displayName?: string; n: number }>;
     communityWords?: string[];
+    selfStyle?: {
+      avgLen?: number;
+      keigoRate?: number;
+      exclaimRate?: number;
+      laugh?: string;
+      streakDays?: number;
+    };
+    selfVocatives?: string[];
   } | null;
 };
 
