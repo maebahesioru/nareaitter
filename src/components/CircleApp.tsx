@@ -13,6 +13,7 @@ import { useLocale } from "./LocaleProvider";
 import { SaveCircleImageButton } from "./SaveCircleImageButton";
 import { ShareButton } from "./ShareButton";
 import { ThemeToggle } from "./ThemeToggle";
+import { AmazonPicks } from "@/components/AmazonPicks";
 
 const EMPTY_SELF: SelfProfile = { screenName: "", displayName: "" };
 
@@ -522,6 +523,8 @@ export function CircleApp(props: CircleAppProps = {}) {
           }
         />
       </div>
+
+      <AmazonPicks />
 
       <footer className="space-y-2 text-center text-xs leading-relaxed text-zinc-500 dark:text-zinc-600">
         <p>{t.footerLegal}</p>
