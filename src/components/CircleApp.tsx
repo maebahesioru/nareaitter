@@ -53,7 +53,19 @@ type YahooMentionsResponse = {
   counts: { mentionsToYou: number; mentionsFromYou: number };
   circleUsers?: CircleUser[];
   recentSelfTweets?: string[];
-  selfActivity?: { topHours: number[]; fromYou7d: number; toYou7d: number };
+  selfActivity?: {
+    topHours: number[];
+    fromYou7d: number;
+    toYou7d: number;
+    weeklyTo?: number[];
+    weeklyFrom?: number[];
+    postGapMin?: number;
+    weekdayType?: string;
+    newConn14d?: number;
+    dormant14d?: number;
+    words?: string[];
+  };
+  communityWords?: string[];
   profileDescription?: string;
   selfEmojis?: string[];
   recentMentionsToYou?: Array<{ from: string; text: string; at: number }>;
@@ -89,11 +101,23 @@ export function CircleApp(props: CircleAppProps = {}) {
   const [maxUsers, setMaxUsers] = useState(9999);
   const [viewMode, setViewMode] = useState<ViewMode>("circle");
   const [selfTweets, setSelfTweets] = useState<string[]>([]);
-  const [selfActivity, setSelfActivity] = useState<{ topHours: number[]; fromYou7d: number; toYou7d: number } | null>(null);
+  const [selfActivity, setSelfActivity] = useState<{
+    topHours: number[];
+    fromYou7d: number;
+    toYou7d: number;
+    weeklyTo?: number[];
+    weeklyFrom?: number[];
+    postGapMin?: number;
+    weekdayType?: string;
+    newConn14d?: number;
+    dormant14d?: number;
+    words?: string[];
+  } | null>(null);
   const [promptExtras, setPromptExtras] = useState<{
     selfEmojis?: string[];
     recentMentionsToYou?: Array<{ from: string; text: string; at: number }>;
     topSentTargets?: Array<{ screenName: string; displayName?: string; n: number }>;
+    communityWords?: string[];
   } | null>(null);
 
   const fetchYahooMentions = useCallback(async (overrideHandle?: string) => {
@@ -117,6 +141,7 @@ export function CircleApp(props: CircleAppProps = {}) {
         selfEmojis: data.selfEmojis,
         recentMentionsToYou: data.recentMentionsToYou,
         topSentTargets: data.topSentTargets,
+        communityWords: data.communityWords,
       });
       const list = data.circleUsers ?? [];
       if (list.length === 0) {
@@ -177,6 +202,7 @@ export function CircleApp(props: CircleAppProps = {}) {
         selfEmojis: data.selfEmojis,
         recentMentionsToYou: data.recentMentionsToYou,
         topSentTargets: data.topSentTargets,
+        communityWords: data.communityWords,
         selfAvatarUrl: data.selfAvatarUrl,
         selfAvatarUrlPreview: data.selfAvatarUrlPreview,
         profileFollowers: data.profileFollowers,

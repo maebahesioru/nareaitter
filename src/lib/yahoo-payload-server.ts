@@ -10,6 +10,59 @@ import {
   pickSelfProfileImageFromYahoo,
 } from "@/lib/yahoo-realtime-fetch";
 import { fetchUserBio } from "@/lib/x-profile-image";
+
+/** 頻出フレーズ抽出（日本語連続文字のn-gram・長さ重み付け＋部分重複排除） */
+function topPhrases(texts: string[], k = 6): string[] {
+  const counts = new Map<string, number>();
+  for (const tx of texts) {
+    const runs = (tx ?? "").match(/[\u3041-\u30FF\u4E00-\u9FFF]{2,}/g) ?? [];
+    for (const run of runs) {
+      for (let n = 2; n <= Math.min(5, run.length); n++) {
+        for (let i = 0; i + n <= run.length; i++) {
+          const g = run.slice(i, i + n);
+          counts.set(g, (counts.get(g) ?? 0) + 1);
+        }
+      }
+    }
+  }
+  const cands = [...counts.entries()].filter(([, cnt]) => cnt >= 6);
+  cands.sort((a, b) => b[1] * Math.pow(b[0].length, 1.6) - a[1] * Math.pow(a[0].length, 1.6));
+  const windows = (s: string): Set<string> => {
+    const set = new Set<string>();
+    for (let i = 0; i + 3 <= s.length; i++) set.add(s.slice(i, i + 3));
+    return set;
+  };
+  const out: string[] = [];
+  const outWins: Set<string>[] = [];
+  for (const [g] of cands) {
+    if (out.length >= k) break;
+    if (out.some((o) => o.includes(g) || g.includes(o))) continue;
+    const gw = windows(g);
+    const frag = outWins.some((ow) => {
+      let shared = 0;
+      for (const w of gw) if (ow.has(w)) shared += 1;
+      return shared / Math.max(1, Math.min(gw.size, ow.size)) >= 0.5;
+    });
+    if (frag) continue;
+    out.push(g);
+    outWins.push(gw);
+  }
+  return out;
+}
+
+/** 週次バケット（index0=4週前 〜 index4=直近7日） */
+function weeklyBuckets(entries: { createdAt?: number }[], nowSec: number): number[] {
+  const w = [0, 0, 0, 0, 0];
+  for (const e of entries) {
+    const t = e.createdAt ?? 0;
+    if (t <= 0) continue;
+    const age = nowSec - t;
+    if (age < 0 || age >= 35 * 86400) continue;
+    const idx = 4 - Math.min(4, Math.floor(age / (7 * 86400)));
+    w[idx] += 1;
+  }
+  return w;
+}
 import { spriteSliceSig } from "@/lib/sprite-sig";
 import { yahooAggregatesToCircleUsers } from "@/lib/yahoo-to-circle";
 import { resolveCircleAvatarUrl, resolveProfileData } from "@/lib/x-profile-image";
@@ -142,7 +195,48 @@ export async function buildYahooPayload(
     const toYou7d = mentionsToYou.filter(
       (e) => (e.createdAt ?? 0) >= nowSec - 7 * 86400,
     ).length;
-    payload.selfActivity = { topHours, fromYou7d, toYou7d };
+    // 週次トレンド・投稿間隔・曜日・頻出ワード
+    const weeklyTo = weeklyBuckets(mentionsToYou, nowSec);
+    const weeklyFrom = weeklyBuckets(mentionsFromYou, nowSec);
+    const tsSorted = mentionsFromYou
+      .map((e) => e.createdAt ?? 0)
+      .filter((t) => t > 0)
+      .sort((a, b) => a - b);
+    let postGapMin: number | undefined;
+    if (tsSorted.length >= 5) {
+      const gaps: number[] = [];
+      for (let i = 1; i < tsSorted.length; i++) {
+        const g = tsSorted[i] - tsSorted[i - 1];
+        if (g > 60) gaps.push(g); // 1分未満の連投は除外
+      }
+      if (gaps.length) {
+        gaps.sort((a, b) => a - b);
+        postGapMin = Math.max(1, Math.round(gaps[Math.floor(gaps.length / 2)] / 60));
+      }
+    }
+    const wd = new Array<number>(7).fill(0);
+    for (const t of tsSorted) wd[new Date(t * 1000).getDay()] += 1;
+    const wdTotal = wd.reduce((a, b) => a + b, 0);
+    let weekdayType: string | undefined;
+    if (wdTotal >= 10) {
+      const weekend = wd[0] + wd[6];
+      const weekendRatio = weekend / wdTotal;
+      weekdayType = weekendRatio >= 0.4 ? "土日型" : weekendRatio <= 0.18 ? "平日型" : "満遍なく";
+    }
+    const fromYouTexts = mentionsFromYou.map((e) => e.displayText ?? "");
+    const toYouTexts = mentionsToYou.map((e) => e.displayText ?? "");
+    payload.selfActivity = {
+      topHours,
+      fromYou7d,
+      toYou7d,
+      weeklyTo,
+      weeklyFrom,
+      postGapMin,
+      weekdayType,
+      words: topPhrases(fromYouTexts),
+    };
+    const communityWords = topPhrases(toYouTexts);
+    if (communityWords.length) payload.communityWords = communityWords;
     // 自分のよく使う絵文字
     const selfEmojiCounts = new Map<string, number>();
     for (const e of mentionsFromYou) {
@@ -194,6 +288,19 @@ export async function buildYahooPayload(
       }),
     );
     payload.circleUsers = circleUsers;
+    // 界隈の出入り（直近14日）
+    const nowMs = Date.now();
+    const d14 = 14 * 86400 * 1000;
+    const newConn14d = circleUsers.filter((u) => {
+      const f = u.firstInteractionAt ? Date.parse(u.firstInteractionAt) : NaN;
+      return Number.isFinite(f) && nowMs - f <= d14;
+    }).length;
+    const dormant14d = circleUsers.filter((u) => {
+      const l = u.lastInteractionAt ? Date.parse(u.lastInteractionAt) : NaN;
+      return Number.isFinite(l) && nowMs - l > d14;
+    }).length;
+    (payload.selfActivity as Record<string, unknown>).newConn14d = newConn14d;
+    (payload.selfActivity as Record<string, unknown>).dormant14d = dormant14d;
     if (selfHd?.trim()) payload.selfAvatarUrl = selfHd.trim();
     if (selfYahoo) payload.selfAvatarUrlPreview = selfYahoo;
     if (profileData) {
@@ -217,7 +324,7 @@ function getCachedYahooPayload(name: string, buildCircle: boolean) {
   return unstable_cache(
     () => buildYahooPayload(name, buildCircle),
     [
-      "yahoo-mentions-v7",
+      "yahoo-mentions-v9",
       name.toLowerCase(),
       buildCircle ? "circle" : "counts",
     ],

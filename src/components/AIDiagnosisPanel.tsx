@@ -15,12 +15,24 @@ type Props = {
   /** 自分の最近の投稿（診断の文脈用） */
   selfTweets?: string[];
   /** 自分の活動統計（診断の文脈用） */
-  selfActivity?: { topHours: number[]; fromYou7d: number; toYou7d: number } | null;
+  selfActivity?: {
+    topHours: number[];
+    fromYou7d: number;
+    toYou7d: number;
+    weeklyTo?: number[];
+    weeklyFrom?: number[];
+    postGapMin?: number;
+    weekdayType?: string;
+    newConn14d?: number;
+    dormant14d?: number;
+    words?: string[];
+  } | null;
   /** その他の文脈（絵文字・最近のメンション・送信トップ） */
   extras?: {
     selfEmojis?: string[];
     recentMentionsToYou?: Array<{ from: string; text: string; at: number }>;
     topSentTargets?: Array<{ screenName: string; displayName?: string; n: number }>;
+    communityWords?: string[];
   } | null;
 };
 

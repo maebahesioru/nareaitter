@@ -83,7 +83,19 @@ export type PromptExtras = {
   selfEmojis?: string[];
   recentMentionsToYou?: Array<{ from: string; text: string; at: number }>;
   topSentTargets?: Array<{ screenName: string; displayName?: string; n: number }>;
+  communityWords?: string[];
 };
+
+function trendArrow(w: number[] | undefined, isJa: boolean): string {
+  if (!w?.length || w.length < 4) return "";
+  const first = (w[0] + w[1]) / 2;
+  const last = (w[w.length - 2] + w[w.length - 1]) / 2;
+  if (first <= 0) return "";
+  const r = last / first;
+  if (r >= 1.3) return isJa ? "（加速中↑）" : " (accelerating)";
+  if (r <= 0.7) return isJa ? "（減速中↓）" : " (slowing down)";
+  return isJa ? "（横ばい）" : " (steady)";
+}
 
 function fmtTs(t: number): string {
   if (!t) return "?";
@@ -100,7 +112,18 @@ function hourLabel(h: number): string {
   return `${type}（${h}時台中心）`;
 }
 
-export type SelfActivity = { topHours: number[]; fromYou7d: number; toYou7d: number };
+export type SelfActivity = {
+  topHours: number[];
+  fromYou7d: number;
+  toYou7d: number;
+  weeklyTo?: number[];
+  weeklyFrom?: number[];
+  postGapMin?: number;
+  weekdayType?: string;
+  newConn14d?: number;
+  dormant14d?: number;
+  words?: string[];
+};
 
 function fmtDate(iso?: string): string {
   return iso ? iso.slice(0, 10).replace(/-/g, "/") : "?";
@@ -141,6 +164,38 @@ function buildSelfSection(
         ? `直近7日の投稿: ${selfActivity.fromYou7d}件・受け取ったメンション: ${selfActivity.toYou7d}件`
         : `Last 7 days: ${selfActivity.fromYou7d} posts, ${selfActivity.toYou7d} mentions received`,
     );
+    if (selfActivity.weeklyTo?.length) {
+      activityLines.push(
+        isJa
+          ? `週次トレンド(被メンション・4週前→今週): ${selfActivity.weeklyTo.join("→")}${trendArrow(selfActivity.weeklyTo, isJa)}`
+          : `Weekly mentions received (4w ago -> now): ${selfActivity.weeklyTo.join("->")}${trendArrow(selfActivity.weeklyTo, isJa)}`,
+      );
+    }
+    if (selfActivity.weeklyFrom?.length) {
+      activityLines.push(
+        isJa
+          ? `週次トレンド(自分の投稿): ${selfActivity.weeklyFrom.join("→")}`
+          : `Weekly own posts: ${selfActivity.weeklyFrom.join("->")}`,
+      );
+    }
+    if (selfActivity.postGapMin !== undefined) {
+      const m = selfActivity.postGapMin;
+      const gapText = m < 120 ? `約${m}分おき` : `約${Math.round(m / 6) / 10}時間おき`;
+      activityLines.push(isJa ? `投稿間隔: 中央値 ${gapText}` : `Posting gap: median ~${Math.round(m / 60)}min`);
+    }
+    if (selfActivity.weekdayType) {
+      activityLines.push(isJa ? `曜日傾向: ${selfActivity.weekdayType}` : `Weekday pattern: ${selfActivity.weekdayType}`);
+    }
+    if (selfActivity.newConn14d !== undefined || selfActivity.dormant14d !== undefined) {
+      activityLines.push(
+        isJa
+          ? `界隈の出入り(直近2週間): 新しく交流が始まった相手 ${selfActivity.newConn14d ?? 0}人・交流が絶えた相手 ${selfActivity.dormant14d ?? 0}人`
+          : `Churn (2w): ${selfActivity.newConn14d ?? 0} new connections, ${selfActivity.dormant14d ?? 0} gone quiet`,
+      );
+    }
+    if (selfActivity.words?.length) {
+      activityLines.push(isJa ? `自分の頻出ワード: ${selfActivity.words.join("・")}` : `My frequent words: ${selfActivity.words.join(", ")}`);
+    }
   }
   const tweetList = (selfTweets ?? []).map((t) => `- 「${t}」`).join("\n");
   const bioLine = self.profileDescription ? `\nプロフィール文: 「${self.profileDescription}」` : "";
@@ -199,7 +254,7 @@ function userLine(u: CircleUser, idx: number, isJa: boolean): string {
 
 function buildUserDataSection(users: CircleUser[], isJa: boolean): string {
   if (users.length === 0) return isJa ? "（データなし）" : "(no data)";
-  return users.slice(0, 20).map((u, i) => userLine(u, i, isJa)).join("\n");
+  return users.slice(0, 25).map((u, i) => userLine(u, i, isJa)).join("\n");
 }
 
 export function generatePrompt(
@@ -221,7 +276,7 @@ export function generatePrompt(
   const selfSection = buildSelfSection(self, selfTweets, selfActivity, isJa);
   const userData = buildUserDataSection(users, isJa);
 
-  const usersHeader = isJa ? "【交流相手データ（トップ20）】" : "【Interaction partners (top 20)】";
+  const usersHeader = isJa ? "【交流相手データ（トップ25）】" : "【Interaction partners (top 25)】";
 
   let extrasSection = "";
   if (extras) {
@@ -240,6 +295,9 @@ export function generatePrompt(
         .map((m) => `- ${fmtTs(m.at)} @${m.from}: 「${m.text}」`)
         .join("\n");
       parts.push(isJa ? `【最近届いたメンション（全体・新しい順）】\n${rows}` : `【Latest mentions received】\n${rows}`);
+    }
+    if (extras.communityWords?.length) {
+      parts.push(isJa ? `【界隈の頻出ワード（届いたメンションから）】\n${extras.communityWords.join("・")}` : `【Community frequent words】\n${extras.communityWords.join(", ")}`);
     }
     if (parts.length) extrasSection = "\n\n" + parts.join("\n\n");
   }

@@ -164,7 +164,7 @@ export async function yahooAggregatesToCircleUsers(
       const avatarUrl = hdRaw?.trim() || undefined;
       const keepContext = i < 64;
       const keepDeep = i < 20;
-      const keepTop5 = i < 5;
+      const keepTop5 = i < 10;
       const speeds = keepDeep ? replySpeeds(r.hist) : {};
       return {
         id: `yahoo-${r.screen}-${i}`,
