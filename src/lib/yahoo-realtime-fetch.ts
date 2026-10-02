@@ -477,13 +477,32 @@ export type MentionPeerAgg = {
   prevT?: number;
   first?: number;
   n7?: number;
+  /** 直近のやり取り履歴（最大8件・新しい順） */
+  hist?: Array<{ t: number; dir: "from" | "to"; text: string }>;
+  /** よく使う絵文字トップ3 */
+  emojis?: string[];
+  /** 最も多い活動時間帯（0-23） */
+  activeHour?: number;
 };
+
+/** テキストから絵文字を抽出（ZWJ連結・国旗ペア対応の簡易版） */
+export function extractEmojis(text: string): string[] {
+  const re = /\p{Regional_Indicator}{2}|\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*/gu;
+  return text.match(re) ?? [];
+}
+
+function topEmojisOf(counts: Map<string, number>, k = 3): string[] | undefined {
+  const arr = [...counts.entries()].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, k);
+  return arr.length ? arr.map(([e]) => e) : undefined;
+}
 
 export function aggregateMentionAuthors(
   mentionsToYou: YahooRealtimeEntry[],
 ): Record<string, MentionPeerAgg> {
   const nowSec = Math.floor(Date.now() / 1000);
   const map: Record<string, MentionPeerAgg> = {};
+  const emojiCounts = new Map<string, Map<string, number>>();
+  const hourCounts = new Map<string, number[]>();
   for (const e of mentionsToYou) {
     const sn = (e.screenName ?? "unknown").toLowerCase();
     const t = typeof e.createdAt === "number" && e.createdAt > 0 ? e.createdAt : 0;
@@ -506,11 +525,37 @@ export function aggregateMentionAuthors(
           cur.prevText = txt;
           cur.prevT = t;
         }
+        (cur.hist ??= []).push({ t, dir: "from", text: txt });
       }
       if (t > 0 && (cur.first === undefined || t < cur.first)) cur.first = t;
       if (!cur.name && nm) cur.name = nm;
     } else {
-      map[sn] = { n: 1, last: t, name: nm || undefined, text: txt, textT: t, first: t || undefined, n7: is7d ? 1 : 0 };
+      map[sn] = { n: 1, last: t, name: nm || undefined, text: txt, textT: t, first: t || undefined, n7: is7d ? 1 : 0, hist: txt ? [{ t, dir: "from", text: txt }] : undefined };
+    }
+    if (txt) {
+      let em = emojiCounts.get(sn);
+      if (!em) { em = new Map(); emojiCounts.set(sn, em); }
+      for (const ch of extractEmojis(txt)) em.set(ch, (em.get(ch) ?? 0) + 1);
+    }
+    if (t > 0) {
+      let hc = hourCounts.get(sn);
+      if (!hc) { hc = new Array<number>(24).fill(0); hourCounts.set(sn, hc); }
+      hc[new Date(t * 1000).getHours()] += 1;
+    }
+  }
+  for (const [sn, cur] of Object.entries(map)) {
+    if (cur.hist && cur.hist.length > 8) {
+      cur.hist.sort((a, b) => b.t - a.t);
+      cur.hist = cur.hist.slice(0, 8);
+    }
+    const em = emojiCounts.get(sn);
+    if (em) cur.emojis = topEmojisOf(em);
+    const hc = hourCounts.get(sn);
+    if (hc) {
+      let best = -1;
+      let bestN = 0;
+      hc.forEach((n, h) => { if (n > bestN) { bestN = n; best = h; } });
+      if (best >= 0) cur.activeHour = best;
     }
   }
   return map;
@@ -547,12 +592,19 @@ export function aggregateMentionTargets(
             cur.prevText = ownTxt;
             cur.prevT = t;
           }
+          (cur.hist ??= []).push({ t, dir: "to", text: ownTxt });
         }
         if (t > 0 && (cur.first === undefined || t < cur.first)) cur.first = t;
         if (!cur.name && nm) cur.name = nm;
       } else {
-        map[sn] = { n: 1, last: t, name: nm || undefined, text: ownTxt, textT: t, first: t || undefined, n7: is7d ? 1 : 0 };
+        map[sn] = { n: 1, last: t, name: nm || undefined, text: ownTxt, textT: t, first: t || undefined, n7: is7d ? 1 : 0, hist: ownTxt ? [{ t, dir: "to", text: ownTxt }] : undefined };
       }
+    }
+  }
+  for (const cur of Object.values(map)) {
+    if (cur.hist && cur.hist.length > 8) {
+      cur.hist.sort((a, b) => b.t - a.t);
+      cur.hist = cur.hist.slice(0, 8);
     }
   }
   return map;

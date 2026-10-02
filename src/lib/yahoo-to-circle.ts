@@ -2,6 +2,37 @@ import type { CircleUser } from "@/types/circle";
 import type { MentionPeerAgg } from "@/lib/yahoo-realtime-fetch";
 import { resolveCircleAvatarUrl } from "@/lib/x-profile-image";
 
+type HistItem = { t: number; dir: "from" | "to"; text: string };
+
+function median(nums: number[]): number | undefined {
+  if (!nums.length) return undefined;
+  const s = [...nums].sort((a, b) => a - b);
+  return s[Math.floor(s.length / 2)];
+}
+
+/** 会話履歴から返信速度を実測（自分の投稿→相手の反応 / 相手の投稿→自分の反応・中央値・分） */
+function replySpeeds(hist: HistItem[]): { themMin?: number; meMin?: number } {
+  if (hist.length < 2) return {};
+  const sorted = [...hist].sort((a, b) => a.t - b.t);
+  const themGaps: number[] = [];
+  const meGaps: number[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const m = sorted[i];
+    if (!m.t) continue;
+    for (let j = i + 1; j < sorted.length; j++) {
+      const n = sorted[j];
+      if (n.dir === m.dir) continue;
+      const gap = n.t - m.t;
+      if (gap > 0 && gap <= 3600) {
+        (m.dir === "to" ? themGaps : meGaps).push(gap);
+      }
+      break;
+    }
+  }
+  const toMin = (g?: number) => (g !== undefined ? Math.max(1, Math.round(g / 60)) : undefined);
+  return { themMin: toMin(median(themGaps)), meMin: toMin(median(meGaps)) };
+}
+
 /** 無制限並列だと FixTweet 系 API が 429 になり再試行で遅延が積む（実測: 28並列までは429なし・63req/s） */
 const AVATAR_FETCH_CONCURRENCY = 28;
 
@@ -74,6 +105,9 @@ export async function yahooAggregatesToCircleUsers(
     toThem?: string;
     fromThem2?: string;
     toThem2?: string;
+    hist: HistItem[];
+    activeHour?: number;
+    emojis?: string[];
   }[] = [];
   for (const k of keys) {
     if (k.toLowerCase() === self) continue;
@@ -97,6 +131,9 @@ export async function yahooAggregatesToCircleUsers(
         toThem: b?.text,
         fromThem2: a?.prevText,
         toThem2: b?.prevText,
+        hist: [...(a?.hist ?? []), ...(b?.hist ?? [])].sort((x, y) => y.t - x.t),
+        activeHour: a?.activeHour,
+        emojis: a?.emojis,
       });
     }
   }
@@ -127,6 +164,8 @@ export async function yahooAggregatesToCircleUsers(
       const avatarUrl = hdRaw?.trim() || undefined;
       const keepContext = i < 64;
       const keepDeep = i < 20;
+      const keepTop5 = i < 5;
+      const speeds = keepDeep ? replySpeeds(r.hist) : {};
       return {
         id: `yahoo-${r.screen}-${i}`,
         screenName: r.screen,
@@ -136,6 +175,11 @@ export async function yahooAggregatesToCircleUsers(
         latestFromThem2: keepDeep ? r.fromThem2 : undefined,
         latestToThem2: keepDeep ? r.toThem2 : undefined,
         mentionsLast7d: keepContext ? r.n7 : undefined,
+        activeHour: keepContext ? r.activeHour : undefined,
+        topEmojis: keepDeep ? r.emojis : undefined,
+        replyThemMin: keepDeep ? speeds.themMin : undefined,
+        replyMeMin: keepDeep ? speeds.meMin : undefined,
+        exchange: keepTop5 && r.hist.length ? r.hist.slice(0, 6).map((h) => ({ t: h.t, dir: h.dir, text: h.text })) : undefined,
         firstInteractionAt:
           keepContext && r.first && r.first > 0
             ? new Date(r.first * 1000).toISOString()

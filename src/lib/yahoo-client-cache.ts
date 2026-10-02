@@ -1,7 +1,7 @@
 import type { CircleUser } from "@/types/circle";
 
 /** セッション内で同一ユーザーの再 fetch を減らし Function Invocations を抑える */
-const KEY_PREFIX = "nareai-yahoo-v8:";
+const KEY_PREFIX = "nareai-yahoo-v9:";
 /** 鮮度とのトレードオフ。Yahoo の profile 画像 URL（rts-pctr 等）は短時間で失効しやすい */
 const TTL_MS = 8 * 60 * 1000;
 
@@ -11,6 +11,10 @@ export type YahooCircleClientCache = {
   circleUsers?: CircleUser[];
   recentSelfTweets?: string[];
   selfActivity?: { topHours: number[]; fromYou7d: number; toYou7d: number };
+  profileDescription?: string;
+  selfEmojis?: string[];
+  recentMentionsToYou?: Array<{ from: string; text: string; at: number }>;
+  topSentTargets?: Array<{ screenName: string; displayName?: string; n: number }>;
   selfAvatarUrl?: string;
   selfAvatarUrlPreview?: string;
   profileFollowers?: number;

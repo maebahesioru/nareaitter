@@ -16,6 +16,12 @@ type Props = {
   selfTweets?: string[];
   /** 自分の活動統計（診断の文脈用） */
   selfActivity?: { topHours: number[]; fromYou7d: number; toYou7d: number } | null;
+  /** その他の文脈（絵文字・最近のメンション・送信トップ） */
+  extras?: {
+    selfEmojis?: string[];
+    recentMentionsToYou?: Array<{ from: string; text: string; at: number }>;
+    topSentTargets?: Array<{ screenName: string; displayName?: string; n: number }>;
+  } | null;
 };
 
 const AI_APPS = [
@@ -26,7 +32,7 @@ const AI_APPS = [
   { name: "Grok", url: "https://x.com/i/grok" },
 ];
 
-export function AIDiagnosisPanel({ self, users, selfTweets, selfActivity }: Props) {
+export function AIDiagnosisPanel({ self, users, selfTweets, selfActivity, extras }: Props) {
   const { locale, t } = useLocale();
   const [selected, setSelected] = useState<DiagnosisType | null>(null);
   const [partner, setPartner] = useState("");
@@ -42,8 +48,9 @@ export function AIDiagnosisPanel({ self, users, selfTweets, selfActivity }: Prop
       DIAGNOSIS_DEFS.find((d) => d.id === selected)?.needsPartner ? partner || undefined : undefined,
       selfTweets,
       selfActivity ?? undefined,
+      extras ?? undefined,
     );
-  }, [selected, self, users, partner, locale, selfTweets, selfActivity]);
+  }, [selected, self, users, partner, locale, selfTweets, selfActivity, extras]);
 
   const handleCopy = useCallback(async () => {
     try {

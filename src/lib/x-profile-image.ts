@@ -9,6 +9,7 @@ type FxTwitterUserResponse = {
   user?: {
     avatar_url?: string;
     banner_url?: string;
+    description?: string;
     followers?: number;
     following?: number;
     tweets?: number;
@@ -23,6 +24,7 @@ export type XProfileData = {
   tweets: number;
   likes: number;
   joinedAt: string;
+  description?: string;
 };
 
 /**
@@ -186,6 +188,35 @@ export async function resolveCircleAvatarUrl(screenName: string): Promise<string
   return fetchXAvatarUrl(screenName);
 }
 
+/** ユーザーbioのメモ（6時間） */
+const bioMem = new Map<string, { t: number; bio: string | null }>();
+const BIO_TTL_MS = 6 * 60 * 60 * 1000;
+
+/** プロフィール文（bio）を取得。取れなければ null。6時間メモ。 */
+export async function fetchUserBio(screenName: string): Promise<string | null> {
+  const clean = screenName.replace(/^@/, "").trim();
+  if (!clean) return null;
+  const key = clean.toLowerCase();
+  const hit = bioMem.get(key);
+  if (hit && Date.now() - hit.t < BIO_TTL_MS) return hit.bio;
+  try {
+    const res = await fetch(`${FX_USER_API}/${encodeURIComponent(clean)}`, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) {
+      bioMem.set(key, { t: Date.now(), bio: null });
+      return null;
+    }
+    const data = (await res.json()) as FxTwitterUserResponse;
+    const bio = (data.user?.description ?? "").replace(/\s+/g, " ").trim().slice(0, 160) || null;
+    bioMem.set(key, { t: Date.now(), bio });
+    return bio;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * fxtwitter の完全なユーザープロファイルを取得する。
  * アカウント推定売却価格などの計算に使用。
@@ -213,6 +244,7 @@ export async function resolveProfileData(screenName: string): Promise<XProfileDa
         tweets: data.user.tweets ?? 0,
         likes: data.user.likes ?? 0,
         joinedAt: data.user.created_at ?? "",
+        description: (data.user.description ?? "").replace(/\s+/g, " ").trim().slice(0, 160) || undefined,
       };
     } catch {
       // retry

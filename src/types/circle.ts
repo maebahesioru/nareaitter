@@ -28,6 +28,18 @@ export type CircleUser = {
   mentionsLast7d?: number;
   /** 最初に交流した日時（ISO 8601・上位ユーザーのみ） */
   firstInteractionAt?: string;
+  /** プロフィール文（上位8人のみ） */
+  bio?: string;
+  /** 相手の最も多い活動時間帯（0-23・上位ユーザーのみ） */
+  activeHour?: number;
+  /** 相手のよく使う絵文字（上位20人のみ） */
+  topEmojis?: string[];
+  /** 相手→自分の返信速度（中央値・分・上位20人のみ） */
+  replyThemMin?: number;
+  /** 自分→相手の返信速度（中央値・分・上位20人のみ） */
+  replyMeMin?: number;
+  /** 直近のやり取りの流れ（上位5人のみ・新しい順） */
+  exchange?: Array<{ t: number; dir: "from" | "to"; text: string }>;
 };
 
 export type FamilyRelationType = "self" | "parent" | "spouse" | "child" | "sibling" | "relative";
@@ -59,6 +71,8 @@ export type SelfProfile = {
   profileTweets?: number;
   profileLikes?: number;
   profileJoinedAt?: string;
+  /** プロフィール文（bio） */
+  profileDescription?: string;
 };
 
 /** グリッド上の相手ユーザー1件（位置は canvas 側で行列から決定） */

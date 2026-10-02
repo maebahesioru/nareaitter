@@ -4,10 +4,12 @@ import {
   aggregateMentionTargets,
   buildYahooAuthorProfileImageMap,
   cleanSnippet,
+  extractEmojis,
   fetchMentionsBothParallel,
   fetchSelfRecentTweets,
   pickSelfProfileImageFromYahoo,
 } from "@/lib/yahoo-realtime-fetch";
+import { fetchUserBio } from "@/lib/x-profile-image";
 import { spriteSliceSig } from "@/lib/sprite-sig";
 import { yahooAggregatesToCircleUsers } from "@/lib/yahoo-to-circle";
 import { resolveCircleAvatarUrl, resolveProfileData } from "@/lib/x-profile-image";
@@ -141,6 +143,34 @@ export async function buildYahooPayload(
       (e) => (e.createdAt ?? 0) >= nowSec - 7 * 86400,
     ).length;
     payload.selfActivity = { topHours, fromYou7d, toYou7d };
+    // 自分のよく使う絵文字
+    const selfEmojiCounts = new Map<string, number>();
+    for (const e of mentionsFromYou) {
+      for (const ch of extractEmojis(e.displayText ?? "")) {
+        selfEmojiCounts.set(ch, (selfEmojiCounts.get(ch) ?? 0) + 1);
+      }
+    }
+    const selfEmojis = [...selfEmojiCounts.entries()]
+      .filter(([, n]) => n >= 3)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([e]) => e);
+    if (selfEmojis.length) payload.selfEmojis = selfEmojis;
+    // 最近届いたメンション（全体の最新3件）
+    payload.recentMentionsToYou = [...mentionsToYou]
+      .sort((x, y) => (y.createdAt ?? 0) - (x.createdAt ?? 0))
+      .slice(0, 3)
+      .map((e) => ({
+        from: e.screenName ?? "",
+        text: cleanSnippet(e.displayText, 100) ?? "",
+        at: e.createdAt ?? 0,
+      }))
+      .filter((x) => x.from && x.text);
+    // 自分が最もメンションした相手トップ3
+    payload.topSentTargets = Object.entries(targetsFromYou)
+      .sort((a, b) => (b[1]?.n ?? 0) - (a[1]?.n ?? 0))
+      .slice(0, 3)
+      .map(([sn, agg]) => ({ screenName: sn, displayName: agg?.name, n: agg?.n ?? 0 }));
     const yahooPeerImages = buildYahooAuthorProfileImageMap(mentionsToYou);
     const selfYahoo = pickSelfProfileImageFromYahoo(mentionsFromYou);
     const [circleUsers, selfHd, profileData] = await Promise.all([
@@ -156,6 +186,13 @@ export async function buildYahooPayload(
     console.log(
       `[payload] ${name} circle=${Date.now() - T1}ms users=${circleUsers.length} total=${Date.now() - T0}ms`,
     );
+    // 上位8人のプロフィール文（bio）を取得して添付
+    await Promise.all(
+      circleUsers.slice(0, 8).map(async (u) => {
+        const bio = await fetchUserBio(u.screenName);
+        if (bio) (u as { bio?: string }).bio = bio;
+      }),
+    );
     payload.circleUsers = circleUsers;
     if (selfHd?.trim()) payload.selfAvatarUrl = selfHd.trim();
     if (selfYahoo) payload.selfAvatarUrlPreview = selfYahoo;
@@ -165,6 +202,7 @@ export async function buildYahooPayload(
       payload.profileTweets = profileData.tweets;
       payload.profileLikes = profileData.likes;
       payload.profileJoinedAt = profileData.joinedAt;
+      if (profileData.description) payload.profileDescription = profileData.description;
     }
   }
 
@@ -179,7 +217,7 @@ function getCachedYahooPayload(name: string, buildCircle: boolean) {
   return unstable_cache(
     () => buildYahooPayload(name, buildCircle),
     [
-      "yahoo-mentions-v6",
+      "yahoo-mentions-v7",
       name.toLowerCase(),
       buildCircle ? "circle" : "counts",
     ],

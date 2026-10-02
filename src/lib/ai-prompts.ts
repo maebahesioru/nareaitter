@@ -76,7 +76,29 @@ export type SelfInfo = {
   profileTweets?: number;
   profileLikes?: number;
   profileJoinedAt?: string;
+  profileDescription?: string;
 };
+
+export type PromptExtras = {
+  selfEmojis?: string[];
+  recentMentionsToYou?: Array<{ from: string; text: string; at: number }>;
+  topSentTargets?: Array<{ screenName: string; displayName?: string; n: number }>;
+};
+
+function fmtTs(t: number): string {
+  if (!t) return "?";
+  const d = new Date(t * 1000);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${mm}/${dd} ${hh}:${mi}`;
+}
+
+function hourLabel(h: number): string {
+  const type = h >= 22 || h <= 4 ? "夜型" : h >= 5 && h <= 9 ? "朝型" : "日中〜夕方型";
+  return `${type}（${h}時台中心）`;
+}
 
 export type SelfActivity = { topHours: number[]; fromYou7d: number; toYou7d: number };
 
@@ -121,9 +143,10 @@ function buildSelfSection(
     );
   }
   const tweetList = (selfTweets ?? []).map((t) => `- 「${t}」`).join("\n");
+  const bioLine = self.profileDescription ? `\nプロフィール文: 「${self.profileDescription}」` : "";
   return (
     (isJa ? "【自分のプロフィール】" : "【My Profile】") +
-    `\n${stats}` +
+    `\n${stats}${bioLine}` +
     (activityLines.length ? `\n${activityLines.join("\n")}` : "") +
     `\n\n` +
     (isJa ? "【自分の最近の投稿（新しい順・メンションの有無は混在）】" : "【My recent posts (newest first; with/without mentions)】") +
@@ -150,10 +173,27 @@ function userLine(u: CircleUser, idx: number, isJa: boolean): string {
   const trend = trendLabel(u, isJa);
   const head = `  ${idx + 1}. @${u.screenName}（${name}メンション計 ${u.interactionCount ?? "?"}（相手→自分 ${u.mentionsReceived ?? "?"}・自分→相手 ${u.mentionsSent ?? "?"}）${span}${trend ? `・${trend}` : ""}）`;
   const lines = [head];
+  const facts: string[] = [];
+  if (u.bio) facts.push(`bio「${u.bio}」`);
+  if (u.activeHour !== undefined) facts.push(`活動: ${hourLabel(u.activeHour)}`);
+  if (u.replyThemMin !== undefined || u.replyMeMin !== undefined) {
+    const rp: string[] = [];
+    if (u.replyThemMin !== undefined) rp.push(`相手→自分 約${u.replyThemMin}分`);
+    if (u.replyMeMin !== undefined) rp.push(`自分→相手 約${u.replyMeMin}分`);
+    facts.push(`返信速度(中央値): ${rp.join(" / ")}`);
+  }
+  if (u.topEmojis?.length) facts.push(`絵文字: ${u.topEmojis.join(" ")}`);
+  if (facts.length) lines.push(`      ${facts.join("・")}`);
   if (u.latestFromThem) lines.push(`      相手の最近の投稿: 「${u.latestFromThem}」`);
   if (u.latestFromThem2) lines.push(`      相手の1つ前の投稿: 「${u.latestFromThem2}」`);
   if (u.latestToThem) lines.push(`      自分→相手の最近の投稿: 「${u.latestToThem}」`);
   if (u.latestToThem2) lines.push(`      自分→相手の1つ前の投稿: 「${u.latestToThem2}」`);
+  if (u.exchange?.length) {
+    lines.push(`      【最近のやり取り（新しい順）】`);
+    for (const x of u.exchange) {
+      lines.push(`        ${fmtTs(x.t)} ${x.dir === "from" ? "相手→自分" : "自分→相手"}: 「${x.text}」`);
+    }
+  }
   return lines.join("\n");
 }
 
@@ -170,6 +210,7 @@ export function generatePrompt(
   partnerScreenName?: string,
   selfTweets?: string[],
   selfActivity?: SelfActivity,
+  extras?: PromptExtras,
 ): string {
   const isJa = locale === "ja";
   const def = DIAGNOSIS_DEFS.find((d) => d.id === type)!;
@@ -181,6 +222,31 @@ export function generatePrompt(
   const userData = buildUserDataSection(users, isJa);
 
   const usersHeader = isJa ? "【交流相手データ（トップ20）】" : "【Interaction partners (top 20)】";
+
+  let extrasSection = "";
+  if (extras) {
+    const parts: string[] = [];
+    if (extras.selfEmojis?.length) {
+      parts.push(isJa ? `【自分のよく使う絵文字】\n${extras.selfEmojis.join(" ")}` : `【My frequent emojis】\n${extras.selfEmojis.join(" ")}`);
+    }
+    if (extras.topSentTargets?.length) {
+      const rows = extras.topSentTargets
+        .map((t) => `- @${t.screenName}${t.displayName ? `（${t.displayName}）` : ""}: ${t.n}回`)
+        .join("\n");
+      parts.push(isJa ? `【自分が最もメンションした相手】\n${rows}` : `【People I mention most】\n${rows}`);
+    }
+    if (extras.recentMentionsToYou?.length) {
+      const rows = extras.recentMentionsToYou
+        .map((m) => `- ${fmtTs(m.at)} @${m.from}: 「${m.text}」`)
+        .join("\n");
+      parts.push(isJa ? `【最近届いたメンション（全体・新しい順）】\n${rows}` : `【Latest mentions received】\n${rows}`);
+    }
+    if (parts.length) extrasSection = "\n\n" + parts.join("\n\n");
+  }
+
+  const legend = isJa
+    ? "\n\n【データの見方】メンション計=双方向の合計。返信速度=1時間以内の反応ペアから算出した中央値。交流期間=この30日データ内での初回〜最終。直近7日=勢いの指標。"
+    : "\n\n【How to read】Total=both directions. Reply speed=median of reactions within 1h. Span=first-last in this 30d window. last7d=momentum.";
 
   let extra = "";
   if (partnerScreenName) {
@@ -199,5 +265,5 @@ export function generatePrompt(
     ? "\n\n【出力形式】\n1. 診断結果のタイトル\n2. 総合評価（点数または段階）\n3. 詳細な分析（箇条書き3〜5項目・各項目に実際の投稿文面を1つ以上引用）\n4. 一言アドバイス\n\n面白おかしく、占い師のような文体でお願いします。"
     : "\n\n【Output Format】\n1. Diagnosis title\n2. Overall rating (score or grade)\n3. Detailed analysis (3-5 bullets, each citing at least one actual post text)\n4. One-line advice\n\nUse a fun, fortune-teller-like tone.";
 
-  return base + selfSection + "\n\n" + usersHeader + "\n" + userData + extra + ending;
+  return base + selfSection + extrasSection + legend + "\n\n" + usersHeader + "\n" + userData + extra + ending;
 }

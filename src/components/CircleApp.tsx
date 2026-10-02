@@ -54,6 +54,10 @@ type YahooMentionsResponse = {
   circleUsers?: CircleUser[];
   recentSelfTweets?: string[];
   selfActivity?: { topHours: number[]; fromYou7d: number; toYou7d: number };
+  profileDescription?: string;
+  selfEmojis?: string[];
+  recentMentionsToYou?: Array<{ from: string; text: string; at: number }>;
+  topSentTargets?: Array<{ screenName: string; displayName?: string; n: number }>;
   selfAvatarUrl?: string;
   selfAvatarUrlPreview?: string;
   profileFollowers?: number;
@@ -86,6 +90,11 @@ export function CircleApp(props: CircleAppProps = {}) {
   const [viewMode, setViewMode] = useState<ViewMode>("circle");
   const [selfTweets, setSelfTweets] = useState<string[]>([]);
   const [selfActivity, setSelfActivity] = useState<{ topHours: number[]; fromYou7d: number; toYou7d: number } | null>(null);
+  const [promptExtras, setPromptExtras] = useState<{
+    selfEmojis?: string[];
+    recentMentionsToYou?: Array<{ from: string; text: string; at: number }>;
+    topSentTargets?: Array<{ screenName: string; displayName?: string; n: number }>;
+  } | null>(null);
 
   const fetchYahooMentions = useCallback(async (overrideHandle?: string) => {
     const name = (overrideHandle ?? yahooHandle).trim().replace(/^@+/, "");
@@ -104,6 +113,11 @@ export function CircleApp(props: CircleAppProps = {}) {
       });
       setSelfTweets(data.recentSelfTweets ?? []);
       setSelfActivity(data.selfActivity ?? null);
+      setPromptExtras({
+        selfEmojis: data.selfEmojis,
+        recentMentionsToYou: data.recentMentionsToYou,
+        topSentTargets: data.topSentTargets,
+      });
       const list = data.circleUsers ?? [];
       if (list.length === 0) {
         setError(t.noPeers);
@@ -122,6 +136,7 @@ export function CircleApp(props: CircleAppProps = {}) {
         profileTweets: data.profileTweets,
         profileLikes: data.profileLikes,
         profileJoinedAt: data.profileJoinedAt,
+        profileDescription: data.profileDescription,
       });
       /** router.replace で / → /user に遷移するとページが差し替わり、再読み込みのように見えるため URL は変えない */
     };
@@ -158,6 +173,10 @@ export function CircleApp(props: CircleAppProps = {}) {
         circleUsers: data.circleUsers,
         recentSelfTweets: data.recentSelfTweets,
         selfActivity: data.selfActivity,
+        profileDescription: data.profileDescription,
+        selfEmojis: data.selfEmojis,
+        recentMentionsToYou: data.recentMentionsToYou,
+        topSentTargets: data.topSentTargets,
         selfAvatarUrl: data.selfAvatarUrl,
         selfAvatarUrlPreview: data.selfAvatarUrlPreview,
         profileFollowers: data.profileFollowers,
@@ -386,7 +405,7 @@ export function CircleApp(props: CircleAppProps = {}) {
                 </p>
               </>
             ) : viewMode === "ai" ? (
-              <AIDiagnosisPanel self={self} users={users} selfTweets={selfTweets} selfActivity={selfActivity} />
+              <AIDiagnosisPanel self={self} users={users} selfTweets={selfTweets} selfActivity={selfActivity} extras={promptExtras} />
             ) : (
               <AccountValuePanel self={self} users={users} />
             )}
