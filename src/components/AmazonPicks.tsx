@@ -5,21 +5,61 @@ import { useLocale } from "@/components/LocaleProvider";
 
 type Item = { name: string; url: string; category: string };
 
+/** カテゴリ → 絵文字（商品画像はアソシエイト規約でAPIなし不可のため、カテゴリアイコンで視覚化） */
+const CATEGORY_EMOJI: Record<string, string> = {
+  "スポーツ・アウトドア": "⚽",
+  "ガジェット・家電": "🔌",
+  "ホビー・おもちゃ": "🧸",
+  "PC・作業環境": "💻",
+  "音・配信・DTM": "🎧",
+  "食品・飲料": "🍫",
+  "ファッション": "👕",
+  "生活・キッチン": "🍳",
+  "健康・ドラッグ": "💊",
+  "生活・収納・家具": "🛋️",
+  "DIY・工具・ガーデン": "🔧",
+  "ペット": "🐾",
+  "ベビー・キッズ": "🍼",
+  "文具・オフィス": "✏️",
+  "カー・バイク": "🚗",
+  "コスメ・美容": "💄",
+  "防災・生活": "🧯",
+  "ゲーム": "🎮",
+  "CD・音楽・映像": "💿",
+  "生活・雑貨": "🧺",
+  "本": "📚",
+  "産業・研究": "🏭",
+  "寝具・タオル": "🛏️",
+  "充電・モバイル": "🔋",
+  "防犯・カメラ": "📷",
+};
+
+function emojiOf(category: string): string {
+  return CATEGORY_EMOJI[category] ?? "🛒";
+}
+
+type Props = {
+  /** inline = メイン列の下部（5件） / rail = PC右レール（8件） */
+  variant?: "inline" | "rail";
+};
+
 /**
  * おすすめ商品（広告）ウィジェット。
  * Amazonアソシエイトのテキストリンクをランダム表示する。
- * 画像・価格・APIは使わない（アソシエイト規約で安全な静的リンク方式）。
+ * 画像・価格はアソシエイト規約上Creators API経由でのみ表示可能なため、
+ * ここでは使わない（カテゴリ絵文字で視覚化）。
  */
-export function AmazonPicks() {
+export function AmazonPicks({ variant = "inline" }: Props) {
   const { locale } = useLocale();
   const isJa = locale === "ja";
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
+  const count = variant === "rail" ? 10 : 5;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch("/api/amazon-picks?n=5", { cache: "no-store" });
+      const r = await fetch(`/api/amazon-picks?n=${count}`, { cache: "no-store" });
       if (r.ok) {
         const j = (await r.json()) as { items?: Item[] };
         setItems(j.items ?? []);
@@ -29,7 +69,7 @@ export function AmazonPicks() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [count]);
 
   useEffect(() => {
     void load();
@@ -57,9 +97,12 @@ export function AmazonPicks() {
           {loading ? (isJa ? "読み込み中…" : "Loading…") : isJa ? "引き直す" : "Shuffle"}
         </button>
       </div>
-      <ul className="space-y-1.5">
+      <ul className="space-y-2">
         {items.map((it, i) => (
           <li key={`${it.url}-${i}`} className="flex items-baseline gap-2 text-sm">
+            <span aria-hidden className="shrink-0 text-base leading-none" title={it.category}>
+              {emojiOf(it.category)}
+            </span>
             <a
               href={it.url}
               target="_blank"
@@ -75,8 +118,8 @@ export function AmazonPicks() {
       </ul>
       <p className="mt-3 text-[10px] leading-relaxed text-zinc-400 dark:text-zinc-600">
         {isJa
-          ? "Amazonのアソシエイトとして、当サイトは適格販売により収入を得ています。"
-          : "As an Amazon Associate, this site earns from qualifying purchases."}
+          ? "Amazonのアソシエイトとして、当サイトは適格販売により収入を得ています。価格・在庫はAmazonの商品ページでご確認ください。"
+          : "As an Amazon Associate, this site earns from qualifying purchases. Check current prices on Amazon."}
       </p>
     </section>
   );

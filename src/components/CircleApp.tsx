@@ -280,7 +280,8 @@ export function CircleApp(props: CircleAppProps = {}) {
   }, [initialScreenName]);
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-10 px-4 pb-16 pt-10 sm:px-6">
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-10 px-4 pb-16 pt-10 sm:px-6 xl:max-w-[1160px] xl:flex-row xl:items-start xl:justify-center xl:gap-8">
+      <div className="flex w-full min-w-0 flex-col gap-10 xl:max-w-3xl">
       <header className="text-center">
         <div className="mb-3 flex items-center justify-end gap-3">
           <LanguageSwitcher />
@@ -524,7 +525,9 @@ export function CircleApp(props: CircleAppProps = {}) {
         />
       </div>
 
-      <AmazonPicks />
+      <div className="xl:hidden">
+        <AmazonPicks />
+      </div>
 
       <footer className="space-y-2 text-center text-xs leading-relaxed text-zinc-500 dark:text-zinc-600">
         <p>{t.footerLegal}</p>
@@ -540,6 +543,11 @@ export function CircleApp(props: CircleAppProps = {}) {
           </a>
         </p>
       </footer>
+      </div>
+
+      <aside className="hidden xl:sticky xl:top-10 xl:block xl:w-[330px] xl:shrink-0">
+        <AmazonPicks variant="rail" />
+      </aside>
     </div>
   );
 }
