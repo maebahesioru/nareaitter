@@ -421,7 +421,21 @@ export function FamilyTreeCanvas({ self, users }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [captureReady, setCaptureReady] = useState(false);
-  const tree = useMemo(() => buildFamilyTree(users, self.screenName), [users, self.screenName]);
+  // アイコンが解決できないユーザーは自動除外（同ランク帯の次の人が繰り上がる）
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
+  const filterPassesRef = useRef(0);
+  const failedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    setExcluded(new Set());
+    filterPassesRef.current = 0;
+    failedRef.current = new Set();
+  }, [users]);
+
+  const tree = useMemo(
+    () => buildFamilyTree(users.filter((u) => !excluded.has(u.screenName)), self.screenName),
+    [users, excluded, self.screenName],
+  );
 
   useLayoutEffect(() => {
     const el = wrapRef.current;
@@ -579,7 +593,9 @@ export function FamilyTreeCanvas({ self, users }: Props) {
             : await load([n.node.user.avatarUrlPreview, n.node.user.avatarUrl, fallbackUrl]);
           if (img) drawCropCircle(ctx, img, n.x, n.y, n.r);
           else {
-            // 画像が存在しないアカウントは「デフォルトアバター」風の色付きディスク + 頭文字
+            // 画像が存在しないアカウント: 自動除外のため記録（最終手段で頭文字ディスク）
+            if (!n.isSelf) failedRef.current.add(n.node.user.screenName);
+            // 「デフォルトアバター」風の色付きディスク + 頭文字
             const pal = isDark
               ? ["#45516e", "#5d4a6e", "#496e52", "#6e5d45", "#6e4a55", "#4a6470"]
               : ["#c7d2e8", "#dbc9e8", "#c9e8d1", "#e8dbc9", "#e8c9d1", "#c9e0e8"];
@@ -652,7 +668,29 @@ export function FamilyTreeCanvas({ self, users }: Props) {
         ctx.fillText(l.text, l.x + 2, l.y + fs / 2 - 1);
       }
 
-      if (!cancelled) setCaptureReady(true);
+      // 失敗ユーザーがいれば除外して再構築（最大3パスで収束）
+      let didExclude = false;
+      if (!cancelled && failedRef.current.size > 0 && filterPassesRef.current < 3) {
+        filterPassesRef.current += 1;
+        const toExclude = [...failedRef.current];
+        failedRef.current = new Set();
+        setExcluded((prev) => {
+          const next = new Set(prev);
+          for (const s of toExclude) next.add(s);
+          return next;
+        });
+        didExclude = true;
+      }
+      if (!cancelled && !didExclude) setCaptureReady(true);
+      if (!cancelled) {
+        (window as unknown as Record<string, unknown>).__ftDebug = {
+          excludedCount: excluded.size,
+          passes: filterPassesRef.current,
+          failedNow: [...failedRef.current],
+          drawnNodes: layout.rows.reduce((s, rr) => s + rr.nodes.length, 0),
+          done: !didExclude,
+        };
+      }
     })();
 
     return () => {
