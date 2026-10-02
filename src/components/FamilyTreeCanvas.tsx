@@ -514,17 +514,26 @@ export function FamilyTreeCanvas({ self, users }: Props) {
       ctx.globalAlpha = 1;
 
       // ノード
-      const imgCache = new Map<string, HTMLImageElement>();
-      const load = async (url?: string) => {
-        if (!url?.trim()) return null;
-        if (imgCache.has(url)) return imgCache.get(url)!;
-        try {
-          const i = await loadImage(url.trim());
-          imgCache.set(url, i);
-          return i;
-        } catch {
-          return null;
+      const imgCache = new Map<string, HTMLImageElement | null>();
+      // 複数ソースを順に試す: プレビュー → HD → サーバー側フォールバック解決
+      const load = async (urls: Array<string | undefined>) => {
+        for (const raw of urls) {
+          const key = raw?.trim();
+          if (!key) continue;
+          if (imgCache.has(key)) {
+            const hit = imgCache.get(key);
+            if (hit) return hit;
+            continue;
+          }
+          try {
+            const i = await loadImage(key);
+            imgCache.set(key, i);
+            return i;
+          } catch {
+            imgCache.set(key, null);
+          }
         }
+        return null;
       };
 
       const nameFs = Math.max(8, Math.min(11, (layout.rows[0]?.radius ?? 20) * 0.44));
@@ -534,8 +543,10 @@ export function FamilyTreeCanvas({ self, users }: Props) {
           if (cancelled) return;
           const stagger = n.isSelf ? 0 : ni % 2;
           ni += 1;
-          const src = n.isSelf ? (self.avatarUrlPreview ?? self.avatarUrl) : (n.node.user.avatarUrlPreview ?? n.node.user.avatarUrl);
-          const img = await load(src);
+          const fallbackUrl = `/api/avatar-fallback?screen=${encodeURIComponent(n.isSelf ? self.screenName : n.node.user.screenName)}`;
+          const img = n.isSelf
+            ? await load([self.avatarUrlPreview, self.avatarUrl, fallbackUrl])
+            : await load([n.node.user.avatarUrlPreview, n.node.user.avatarUrl, fallbackUrl]);
           if (img) drawCropCircle(ctx, img, n.x, n.y, n.r);
           else {
             ctx.fillStyle = isDark ? "#3f3f46" : "#d4d4d8";
