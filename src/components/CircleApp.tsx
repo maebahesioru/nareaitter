@@ -14,6 +14,7 @@ import { SaveCircleImageButton } from "./SaveCircleImageButton";
 import { ShareButton } from "./ShareButton";
 import { ThemeToggle } from "./ThemeToggle";
 import { AmazonPicks } from "@/components/AmazonPicks";
+import { AmazonCategories } from "@/components/AmazonCategories";
 
 const EMPTY_SELF: SelfProfile = { screenName: "", displayName: "" };
 
@@ -280,8 +281,14 @@ export function CircleApp(props: CircleAppProps = {}) {
   }, [initialScreenName]);
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-10 px-4 pb-16 pt-10 sm:px-6 xl:max-w-[1160px] xl:flex-row xl:items-start xl:justify-center xl:gap-8">
-      <div className="flex w-full min-w-0 flex-col gap-10 xl:max-w-3xl">
+    <div className="mx-auto grid w-full max-w-[1600px] grid-cols-1 gap-x-8 px-4 pb-16 pt-10 sm:px-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,768px)_minmax(0,1fr)]">
+      <aside className="hidden xl:block">
+        <div className="sticky top-10 ml-auto w-full max-w-[330px]">
+          <AmazonCategories />
+        </div>
+      </aside>
+
+      <div className="mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-10">
       <header className="text-center">
         <div className="mb-3 flex items-center justify-end gap-3">
           <LanguageSwitcher />
@@ -545,8 +552,10 @@ export function CircleApp(props: CircleAppProps = {}) {
       </footer>
       </div>
 
-      <aside className="hidden xl:sticky xl:top-10 xl:block xl:w-[330px] xl:shrink-0">
-        <AmazonPicks variant="rail" />
+      <aside className="hidden xl:block">
+        <div className="sticky top-10 mr-auto w-full max-w-[330px]">
+          <AmazonPicks variant="rail" />
+        </div>
       </aside>
     </div>
   );

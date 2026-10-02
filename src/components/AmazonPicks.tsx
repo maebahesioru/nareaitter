@@ -34,7 +34,7 @@ const CATEGORY_EMOJI: Record<string, string> = {
   "防犯・カメラ": "📷",
 };
 
-function emojiOf(category: string): string {
+export function categoryEmoji(category: string): string {
   return CATEGORY_EMOJI[category] ?? "🛒";
 }
 
@@ -101,7 +101,7 @@ export function AmazonPicks({ variant = "inline" }: Props) {
         {items.map((it, i) => (
           <li key={`${it.url}-${i}`} className="flex items-baseline gap-2 text-sm">
             <span aria-hidden className="shrink-0 text-base leading-none" title={it.category}>
-              {emojiOf(it.category)}
+              {categoryEmoji(it.category)}
             </span>
             <a
               href={it.url}
