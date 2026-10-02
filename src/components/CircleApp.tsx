@@ -105,6 +105,28 @@ export type CircleAppProps = {
   initialScreenName?: string;
 };
 
+/** ネットワーク断・一時エラー（429/5xx・Failed to fetch等）に自動リトライ（指数バックオフ） */
+async function fetchWithRetry(url: string, init: RequestInit, attempts = 3): Promise<Response> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(url, init);
+      const transient = res.status === 429 || res.status >= 500;
+      if (transient && i < attempts - 1) {
+        await new Promise((r) => setTimeout(r, 1200 * Math.pow(2, i)));
+        continue;
+      }
+      return res;
+    } catch (e) {
+      lastErr = e;
+      if (i < attempts - 1) {
+        await new Promise((r) => setTimeout(r, 1200 * Math.pow(2, i)));
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("fetch failed");
+}
+
 export function CircleApp(props: CircleAppProps = {}) {
   const { initialScreenName } = props;
   const { locale, t, homePath } = useLocale();
@@ -223,7 +245,7 @@ export function CircleApp(props: CircleAppProps = {}) {
       });
       if (locale === "en") q.set("lang", "en");
 
-      const res = await fetch(`/api/yahoo-mentions?${q.toString()}`, {
+      const res = await fetchWithRetry(`/api/yahoo-mentions?${q.toString()}`, {
         method: "GET",
       });
       const data = (await res.json()) as YahooMentionsResponse & { error?: string };
