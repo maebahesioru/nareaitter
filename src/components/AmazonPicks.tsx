@@ -54,7 +54,27 @@ export function AmazonPicks({ variant = "inline" }: Props) {
   const isJa = locale === "ja";
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
+  const [closed, setClosed] = useState(false);
   const count = variant === "rail" ? 10 : 5;
+  const storageKey = `nareai-amazonpicks-closed-${variant}`;
+
+  // タブを閉じるまで「閉じた」状態を記憶
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem(storageKey) === "1") setClosed(true);
+    } catch {
+      /* ignore */
+    }
+  }, [storageKey]);
+
+  const handleClose = useCallback(() => {
+    setClosed(true);
+    try {
+      sessionStorage.setItem(storageKey, "1");
+    } catch {
+      /* ignore */
+    }
+  }, [storageKey]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -75,6 +95,7 @@ export function AmazonPicks({ variant = "inline" }: Props) {
     void load();
   }, [load]);
 
+  if (closed) return null;
   if (!loading && items.length === 0) return null;
 
   return (
@@ -88,14 +109,25 @@ export function AmazonPicks({ variant = "inline" }: Props) {
             {isJa ? "広告" : "Ad"}
           </span>
         </div>
-        <button
-          type="button"
-          onClick={() => void load()}
-          disabled={loading}
-          className="rounded-lg border border-zinc-300/90 bg-white/80 px-3 py-1 text-xs font-medium text-zinc-600 transition hover:border-zinc-400/70 disabled:opacity-50 dark:border-white/15 dark:bg-zinc-800/70 dark:text-zinc-400 dark:hover:border-white/25"
-        >
-          {loading ? (isJa ? "読み込み中…" : "Loading…") : isJa ? "引き直す" : "Shuffle"}
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => void load()}
+            disabled={loading}
+            className="rounded-lg border border-zinc-300/90 bg-white/80 px-3 py-1 text-xs font-medium text-zinc-600 transition hover:border-zinc-400/70 disabled:opacity-50 dark:border-white/15 dark:bg-zinc-800/70 dark:text-zinc-400 dark:hover:border-white/25"
+          >
+            {loading ? (isJa ? "読み込み中…" : "Loading…") : isJa ? "引き直す" : "Shuffle"}
+          </button>
+          <button
+            type="button"
+            onClick={handleClose}
+            aria-label={isJa ? "広告を閉じる" : "Close ad"}
+            title={isJa ? "閉じる" : "Close"}
+            className="flex h-6 w-6 items-center justify-center rounded-md text-sm leading-none text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600 dark:text-zinc-500 dark:hover:bg-white/10 dark:hover:text-zinc-300"
+          >
+            ✕
+          </button>
+        </div>
       </div>
       <ul className="space-y-2">
         {items.map((it, i) => (
