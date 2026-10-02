@@ -56,25 +56,11 @@ export function AmazonPicks({ variant = "inline" }: Props) {
   const [loading, setLoading] = useState(true);
   const [closed, setClosed] = useState(false);
   const count = variant === "rail" ? 10 : 5;
-  const storageKey = `nareai-amazonpicks-closed-${variant}`;
 
-  // タブを閉じるまで「閉じた」状態を記憶
-  useEffect(() => {
-    try {
-      if (sessionStorage.getItem(storageKey) === "1") setClosed(true);
-    } catch {
-      /* ignore */
-    }
-  }, [storageKey]);
-
+  // 閉じるのはこの画面表示限り（リロードで復活）
   const handleClose = useCallback(() => {
     setClosed(true);
-    try {
-      sessionStorage.setItem(storageKey, "1");
-    } catch {
-      /* ignore */
-    }
-  }, [storageKey]);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
