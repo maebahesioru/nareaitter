@@ -324,7 +324,7 @@ function getCachedYahooPayload(name: string, buildCircle: boolean) {
   return unstable_cache(
     () => buildYahooPayload(name, buildCircle),
     [
-      "yahoo-mentions-v9",
+      "yahoo-mentions-v10",
       name.toLowerCase(),
       buildCircle ? "circle" : "counts",
     ],

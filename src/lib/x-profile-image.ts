@@ -188,6 +188,13 @@ export async function resolveCircleAvatarUrl(screenName: string): Promise<string
   return fetchXAvatarUrl(screenName);
 }
 
+/** サロゲートペアを分断しない切り詰め */
+function cutSafeLocal(t: string, max: number): string {
+  if (t.length <= max) return t;
+  const c = t.charCodeAt(max - 1);
+  return t.slice(0, c >= 0xd800 && c <= 0xdbff ? max - 1 : max);
+}
+
 /** ユーザーbioのメモ（6時間） */
 const bioMem = new Map<string, { t: number; bio: string | null }>();
 const BIO_TTL_MS = 6 * 60 * 60 * 1000;
@@ -209,7 +216,7 @@ export async function fetchUserBio(screenName: string): Promise<string | null> {
       return null;
     }
     const data = (await res.json()) as FxTwitterUserResponse;
-    const bio = (data.user?.description ?? "").replace(/\s+/g, " ").trim().slice(0, 160) || null;
+    const bio = cutSafeLocal((data.user?.description ?? "").replace(/\s+/g, " ").trim(), 160) || null;
     bioMem.set(key, { t: Date.now(), bio });
     return bio;
   } catch {
@@ -244,7 +251,7 @@ export async function resolveProfileData(screenName: string): Promise<XProfileDa
         tweets: data.user.tweets ?? 0,
         likes: data.user.likes ?? 0,
         joinedAt: data.user.created_at ?? "",
-        description: (data.user.description ?? "").replace(/\s+/g, " ").trim().slice(0, 160) || undefined,
+        description: cutSafeLocal((data.user.description ?? "").replace(/\s+/g, " ").trim(), 160) || undefined,
       };
     } catch {
       // retry

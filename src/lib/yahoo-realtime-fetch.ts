@@ -458,11 +458,18 @@ export async function fetchMentionsBothParallel(screenName: string): Promise<{
   return { mentionsToYou, mentionsFromYou };
 }
 
-/** 空白・改行を潰し、文面スニペット用に短く切る */
+/** サロゲートペア（絵文字）を分断しない切り詰め位置を返す */
+export function cutSafe(t: string, max: number): number {
+  if (max >= t.length) return t.length;
+  const c = t.charCodeAt(max - 1);
+  return c >= 0xd800 && c <= 0xdbff ? max - 1 : max;
+}
+
+/** 空白・改行を潰し、文面スニペット用に短く切る（絵文字を分断しない） */
 export function cleanSnippet(raw: string | undefined, max = 80): string | undefined {
   const t = (raw ?? "").replace(/\s+/g, " ").trim();
   if (!t) return undefined;
-  return t.length > max ? `${t.slice(0, max)}…` : t;
+  return t.length > max ? `${t.slice(0, cutSafe(t, max))}…` : t;
 }
 
 /** 1 相手あたりの集計（診断の文脈用に初回/7日数/1つ前の文面も持つ） */
