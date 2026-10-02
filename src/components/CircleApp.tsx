@@ -14,7 +14,6 @@ import { SaveCircleImageButton } from "./SaveCircleImageButton";
 import { ShareButton } from "./ShareButton";
 import { ThemeToggle } from "./ThemeToggle";
 import { AmazonPicks } from "@/components/AmazonPicks";
-import { AmazonCategories } from "@/components/AmazonCategories";
 
 const EMPTY_SELF: SelfProfile = { screenName: "", displayName: "" };
 
@@ -284,7 +283,7 @@ export function CircleApp(props: CircleAppProps = {}) {
     <div className="mx-auto grid w-full max-w-[1600px] grid-cols-1 gap-x-8 px-4 pb-16 pt-10 sm:px-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,768px)_minmax(0,1fr)]">
       <aside className="hidden xl:block">
         <div className="sticky top-10 ml-auto w-full max-w-[330px]">
-          <AmazonCategories />
+          <AmazonPicks variant="rail" />
         </div>
       </aside>
 
