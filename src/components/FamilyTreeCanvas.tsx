@@ -670,9 +670,10 @@ export function FamilyTreeCanvas({ self, users }: Props) {
 
       // 失敗ユーザーがいれば除外して再構築（最大3パスで収束）
       let didExclude = false;
-      if (!cancelled && failedRef.current.size > 0 && filterPassesRef.current < 3) {
+      const failedList = [...failedRef.current];
+      if (!cancelled && failedList.length > 0 && filterPassesRef.current < 3) {
         filterPassesRef.current += 1;
-        const toExclude = [...failedRef.current];
+        const toExclude = failedList;
         failedRef.current = new Set();
         setExcluded((prev) => {
           const next = new Set(prev);
@@ -683,10 +684,20 @@ export function FamilyTreeCanvas({ self, users }: Props) {
       }
       if (!cancelled && !didExclude) setCaptureReady(true);
       if (!cancelled) {
-        (window as unknown as Record<string, unknown>).__ftDebug = {
+        const w = window as unknown as Record<string, unknown>;
+        const hist = (w.__ftHistory as unknown[]) ?? [];
+        hist.push({
+          renderExcluded: excluded.size,
+          pass: filterPassesRef.current,
+          failed: failedList,
+          drawn: layout.rows.reduce((s, rr) => s + rr.nodes.length, 0),
+          didExclude,
+        });
+        w.__ftHistory = hist;
+        w.__ftDebug = {
           excludedCount: excluded.size,
           passes: filterPassesRef.current,
-          failedNow: [...failedRef.current],
+          failedNow: failedList,
           drawnNodes: layout.rows.reduce((s, rr) => s + rr.nodes.length, 0),
           done: !didExclude,
         };
