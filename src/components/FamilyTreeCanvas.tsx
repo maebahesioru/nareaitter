@@ -66,6 +66,9 @@ type PlacedItem = {
   midX: number;
   startY: number; // 降下線の始点（夫婦=婚姻線の高さ、単独=円の下端）
   topY: number;
+  side: "single" | "couple";
+  /** 名前ラベルのスタッガー段（0 or 1）。線のノックアウトに使う */
+  nameShift: 0 | 1;
   tier?: ExtendedRelationType;
 };
 
@@ -79,11 +82,13 @@ type PlacedRow = {
   couples: Couple[];
 };
 
-type TNode = { node: FamilyTreeNode; x: number; y: number; r: number; isSelf?: boolean };
+type TNode = { node: FamilyTreeNode; x: number; y: number; r: number; isSelf?: boolean; inCouple?: boolean };
 type Couple = { x1: number; x2: number; y: number };
 type Conn = {
   sX: number;
   sY: number;
+  sSide: "single" | "couple";
+  sShift: 0 | 1;
   busY: number;
   x1: number;
   x2: number;
@@ -303,25 +308,26 @@ function calcLayout(tree: ReturnType<typeof buildFamilyTree>, w: number, locale:
       const left = lefts[i];
       if (it.kind === "single") {
         const cx = left + r;
+        const nshift = ((rowNodes.length % 2) as 0 | 1);
         rowNodes.push({ node: it.node, x: cx, y, r });
-        placed.push({ midX: cx, startY: y + r, topY: y - r, tier: it.tier });
+        placed.push({ midX: cx, startY: y + r, topY: y - r, side: "single", nameShift: nshift, tier: it.tier });
       } else if (it.kind === "couple") {
         const ax = left + r;
         const bx = ax + 2 * r + coupleGap;
-        rowNodes.push({ node: it.nodes[0], x: ax, y, r });
-        rowNodes.push({ node: it.nodes[1], x: bx, y, r });
+        rowNodes.push({ node: it.nodes[0], x: ax, y, r, inCouple: true });
+        rowNodes.push({ node: it.nodes[1], x: bx, y, r, inCouple: true });
         rowCouples.push({ x1: ax + r, x2: bx - r, y });
-        placed.push({ midX: (ax + bx) / 2, startY: y, topY: y, tier: it.tier });
+        placed.push({ midX: (ax + bx) / 2, startY: y, topY: y, side: "couple", nameShift: 0, tier: it.tier });
       } else {
         const ax = left + r;
-        rowNodes.push({ node: tree.root, x: ax, y, r, isSelf: true });
+        rowNodes.push({ node: tree.root, x: ax, y, r, isSelf: true, inCouple: !!it.spouse });
         if (it.spouse) {
           const bx = ax + 2 * r + coupleGap;
-          rowNodes.push({ node: it.spouse, x: bx, y, r });
+          rowNodes.push({ node: it.spouse, x: bx, y, r, inCouple: true });
           rowCouples.push({ x1: ax + r, x2: bx - r, y });
-          placed.push({ midX: (ax + bx) / 2, startY: y, topY: y, tier: "spouse" });
+          placed.push({ midX: (ax + bx) / 2, startY: y, topY: y, side: "couple", nameShift: 0, tier: "spouse" });
         } else {
-          placed.push({ midX: ax, startY: y + r, topY: y - r, tier: "self" });
+          placed.push({ midX: ax, startY: y + r, topY: y - r, side: "single", nameShift: 0, tier: "self" });
         }
       }
     }
@@ -344,7 +350,7 @@ function calcLayout(tree: ReturnType<typeof buildFamilyTree>, w: number, locale:
     const tTopMin = Math.min(...targets.map((t) => t.topY));
     const sStartMax = Math.max(...sources.map((s) => s.startY));
     const gapH = Math.max(20, tTopMin - sStartMax);
-    const busY = sStartMax + gapH * (lane === 0 ? 0.55 : 0.16);
+    const busY = sStartMax + gapH * (lane === 0 ? 0.55 : 0.85);
     const subs = subranges(T, sources.length);
     subs.forEach((sr, i) => {
       if (!sr) return;
@@ -355,6 +361,8 @@ function calcLayout(tree: ReturnType<typeof buildFamilyTree>, w: number, locale:
       conns.push({
         sX: s.midX,
         sY: s.startY,
+        sSide: s.side,
+        sShift: s.nameShift,
         busY,
         x1: Math.min(...xs),
         x2: Math.max(...xs),
@@ -469,8 +477,31 @@ export function FamilyTreeCanvas({ self, users }: Props) {
       ctx.fillRect(0, 0, W, H);
 
       const layout = calcLayout(tree, W, locale as "ja" | "en");
+      const nameFs = Math.max(8, Math.min(11, (layout.rows[0]?.radius ?? 20) * 0.44));
 
-      // 配線（エルボー）
+      // ツリー全体のバウンディングボックスを中央へ寄せる（右偏りの解消）
+      const M = 14;
+      let minX = Infinity;
+      let maxX = -Infinity;
+      for (const row of layout.rows) {
+        for (const n of row.nodes) {
+          minX = Math.min(minX, n.x - n.r);
+          maxX = Math.max(maxX, n.x + n.r);
+        }
+      }
+      let treeDx = Number.isFinite(minX) ? W / 2 - (minX + maxX) / 2 : 0;
+      treeDx = Math.max(treeDx, M - minX);
+      treeDx = Math.min(treeDx, W - M - maxX);
+      if (Math.abs(treeDx) < 3) treeDx = 0;
+      ctx.save();
+      ctx.translate(treeDx, 0);
+
+      // 配線（エルボー）。降下線ソースの単独ノードは名前を右へずらすので、
+      // 線はそのまま（途切れさせず）描く。
+      const dropSources = new Set<string>();
+      for (const c of layout.conns) {
+        if (c.sSide === "single") dropSources.add(`${Math.round(c.sX)}@${Math.round(c.sY)}`);
+      }
       ctx.strokeStyle = lc;
       ctx.fillStyle = lc;
       ctx.lineWidth = 1.4;
@@ -500,11 +531,11 @@ export function FamilyTreeCanvas({ self, users }: Props) {
         ctx.globalAlpha = 1;
         for (const cp of row.couples) {
           ctx.beginPath();
-          ctx.moveTo(cp.x1, cp.y);
-          ctx.lineTo(cp.x2, cp.y);
+          ctx.moveTo(cp.x1 + 1, cp.y);
+          ctx.lineTo(cp.x2 - 1, cp.y);
           ctx.stroke();
           ctx.beginPath();
-          ctx.arc((cp.x1 + cp.x2) / 2, cp.y, 2.4, 0, Math.PI * 2);
+          ctx.arc((cp.x1 + cp.x2) / 2, cp.y, 2, 0, Math.PI * 2);
           ctx.fill();
         }
       }
@@ -536,7 +567,6 @@ export function FamilyTreeCanvas({ self, users }: Props) {
         return null;
       };
 
-      const nameFs = Math.max(8, Math.min(11, (layout.rows[0]?.radius ?? 20) * 0.44));
       for (const row of layout.rows) {
         let ni = 0;
         for (const n of row.nodes) {
@@ -549,15 +579,21 @@ export function FamilyTreeCanvas({ self, users }: Props) {
             : await load([n.node.user.avatarUrlPreview, n.node.user.avatarUrl, fallbackUrl]);
           if (img) drawCropCircle(ctx, img, n.x, n.y, n.r);
           else {
-            ctx.fillStyle = isDark ? "#27272a" : "#e4e4e7";
+            // 画像が存在しないアカウントは「デフォルトアバター」風の色付きディスク + 頭文字
+            const pal = isDark
+              ? ["#45516e", "#5d4a6e", "#496e52", "#6e5d45", "#6e4a55", "#4a6470"]
+              : ["#c7d2e8", "#dbc9e8", "#c9e8d1", "#e8dbc9", "#e8c9d1", "#c9e0e8"];
+            const key = n.isSelf ? self.screenName : n.node.user.screenName || "x";
+            let hsh = 0;
+            for (let ci = 0; ci < key.length; ci++) hsh = (hsh * 31 + key.charCodeAt(ci)) >>> 0;
+            ctx.fillStyle = pal[hsh % pal.length];
             ctx.beginPath();
             ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
             ctx.fill();
-            // 画像が存在しないアカウント（削除済み等）は頭文字入りプレースホルダー
             const nm = (n.isSelf ? self.screenName : n.node.user.displayName || n.node.user.screenName || "?").trim();
-            const initial = [...nm][0] ?? "?";
-            ctx.font = `bold ${Math.max(12, Math.round(n.r * 0.82))}px sans-serif`;
-            ctx.fillStyle = isDark ? "#a1a1aa" : "#71717a";
+            const initial = ([...nm][0] ?? "?").toUpperCase();
+            ctx.font = `bold ${Math.max(12, Math.round(n.r * 0.8))}px sans-serif`;
+            ctx.fillStyle = isDark ? "rgba(244,244,245,0.92)" : "rgba(39,39,42,0.85)";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
             ctx.fillText(initial, n.x, n.y + n.r * 0.04);
@@ -577,15 +613,27 @@ export function FamilyTreeCanvas({ self, users }: Props) {
             const fs = n.isSelf ? Math.max(11, Math.min(14, W * 0.024)) : nameFs;
             ctx.font = `${n.isSelf ? "bold " : ""}${fs}px sans-serif`;
             ctx.fillStyle = n.isSelf ? txt : sub;
-            ctx.textAlign = "center";
+            const dropsDown = dropSources.has(`${Math.round(n.x)}@${Math.round(n.y + n.r)}`);
             let text = label;
-            const maxW = n.r * 2.7;
-            while (text.length > 4 && ctx.measureText(text).width > maxW) text = `${text.slice(0, -2)}…`;
-            ctx.fillText(text, n.x, n.y + n.r + fs + 3 + stagger * (fs + 3));
-            ctx.textAlign = "start";
+            if (dropsDown) {
+              // 降下線と重ならないよう、名前は線の右側へ
+              const maxW = n.r * 1.95;
+              while (text.length > 3 && ctx.measureText(text).width > maxW) text = `${text.slice(0, -2)}…`;
+              ctx.textAlign = "start";
+              ctx.fillText(text, n.x + 6, n.y + n.r + fs + 3 + stagger * (fs + 3));
+            } else {
+              // 夫婦メンバーは中点の降下線に届かない幅に制限
+              const maxW = n.inCouple ? n.r * 1.85 : n.r * 2.7;
+              while (text.length > 4 && ctx.measureText(text).width > maxW) text = `${text.slice(0, -2)}…`;
+              ctx.textAlign = "center";
+              ctx.fillText(text, n.x, n.y + n.r + fs + 3 + stagger * (fs + 3));
+              ctx.textAlign = "start";
+            }
           }
         }
       }
+
+      ctx.restore();
 
       // 世代ラベル（各行の左上）
       for (const l of layout.labels) {
