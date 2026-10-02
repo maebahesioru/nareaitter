@@ -581,6 +581,7 @@ export function FamilyTreeCanvas({ self, users }: Props) {
         return null;
       };
 
+      const nodeResults: [string, "ok" | "fail"][] = [];
       for (const row of layout.rows) {
         let ni = 0;
         for (const n of row.nodes) {
@@ -591,6 +592,7 @@ export function FamilyTreeCanvas({ self, users }: Props) {
           const img = n.isSelf
             ? await load([self.avatarUrlPreview, self.avatarUrl, fallbackUrl])
             : await load([n.node.user.avatarUrlPreview, n.node.user.avatarUrl, fallbackUrl]);
+          nodeResults.push([n.isSelf ? "(self)" : n.node.user.screenName, img ? "ok" : "fail"]);
           if (img) drawCropCircle(ctx, img, n.x, n.y, n.r);
           else {
             // 画像が存在しないアカウント: 自動除外のため記録（最終手段で頭文字ディスク）
@@ -692,6 +694,7 @@ export function FamilyTreeCanvas({ self, users }: Props) {
           failed: failedList,
           drawn: layout.rows.reduce((s, rr) => s + rr.nodes.length, 0),
           didExclude,
+          nodes: nodeResults,
         });
         w.__ftHistory = hist;
         w.__ftDebug = {
