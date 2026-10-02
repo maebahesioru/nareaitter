@@ -490,6 +490,10 @@ export type MentionPeerAgg = {
   emojis?: string[];
   /** 最も多い活動時間帯（0-23） */
   activeHour?: number;
+  /** 最初の交流時の文面（相手 or 自分側） */
+  firstText?: string;
+  /** 最初の交流時の文面の時刻 */
+  firstTextT?: number;
   /** 相手が使いがちな呼称（「架っさん」等・さん/ちゃん系の最頻） */
   vocative?: string;
   /** 笑い方の癖（ｗ派/笑派/草派） */
@@ -543,10 +547,13 @@ export function aggregateMentionAuthors(
         }
         (cur.hist ??= []).push({ t, dir: "from", text: txt });
       }
-      if (t > 0 && (cur.first === undefined || t < cur.first)) cur.first = t;
+      if (t > 0 && (cur.first === undefined || t < cur.first)) {
+        cur.first = t;
+        if (txt) { cur.firstText = txt; cur.firstTextT = t; }
+      }
       if (!cur.name && nm) cur.name = nm;
     } else {
-      map[sn] = { n: 1, last: t, name: nm || undefined, text: txt, textT: t, first: t || undefined, n7: is7d ? 1 : 0, hist: txt ? [{ t, dir: "from", text: txt }] : undefined };
+      map[sn] = { n: 1, last: t, name: nm || undefined, text: txt, textT: t, first: t || undefined, firstText: t > 0 ? txt : undefined, firstTextT: t || undefined, n7: is7d ? 1 : 0, hist: txt ? [{ t, dir: "from", text: txt }] : undefined };
     }
     if (txt) {
       let em = emojiCounts.get(sn);
@@ -642,10 +649,13 @@ export function aggregateMentionTargets(
           }
           (cur.hist ??= []).push({ t, dir: "to", text: ownTxt });
         }
-        if (t > 0 && (cur.first === undefined || t < cur.first)) cur.first = t;
+        if (t > 0 && (cur.first === undefined || t < cur.first)) {
+          cur.first = t;
+          if (ownTxt) { cur.firstText = ownTxt; cur.firstTextT = t; }
+        }
         if (!cur.name && nm) cur.name = nm;
       } else {
-        map[sn] = { n: 1, last: t, name: nm || undefined, text: ownTxt, textT: t, first: t || undefined, n7: is7d ? 1 : 0, hist: ownTxt ? [{ t, dir: "to", text: ownTxt }] : undefined };
+        map[sn] = { n: 1, last: t, name: nm || undefined, text: ownTxt, textT: t, first: t || undefined, firstText: t > 0 ? ownTxt : undefined, firstTextT: t || undefined, n7: is7d ? 1 : 0, hist: ownTxt ? [{ t, dir: "to", text: ownTxt }] : undefined };
       }
     }
   }

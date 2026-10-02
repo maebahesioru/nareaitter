@@ -42,6 +42,10 @@ export type CircleUser = {
   laugh?: string;
   /** 平均文字数（上位20人のみ） */
   avgLen?: number;
+  /** 初対面時の相手の文面（上位20人のみ） */
+  firstFromThem?: string;
+  /** 初対面時の自分の文面（上位20人のみ） */
+  firstToThem?: string;
   /** 自分→相手の返信速度（中央値・分・上位20人のみ） */
   replyMeMin?: number;
   /** 直近のやり取りの流れ（上位5人のみ・新しい順） */

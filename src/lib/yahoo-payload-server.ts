@@ -50,6 +50,20 @@ function topPhrases(texts: string[], k = 6): string[] {
   return out;
 }
 
+/** 週ごとのユニーク相手数 */
+function weeklyBreadth(entries: { createdAt?: number; screenName?: string }[], nowSec: number): number[] {
+  const sets: Set<string>[] = [new Set(), new Set(), new Set(), new Set(), new Set()];
+  for (const e of entries) {
+    const t = e.createdAt ?? 0;
+    if (t <= 0 || !e.screenName) continue;
+    const age = nowSec - t;
+    if (age < 0 || age >= 35 * 86400) continue;
+    const idx = 4 - Math.min(4, Math.floor(age / (7 * 86400)));
+    sets[idx].add(e.screenName.toLowerCase());
+  }
+  return sets.map((s) => s.size);
+}
+
 /** 週次バケット（index0=4週前 〜 index4=直近7日） */
 function weeklyBuckets(entries: { createdAt?: number }[], nowSec: number): number[] {
   const w = [0, 0, 0, 0, 0];
@@ -223,6 +237,23 @@ export async function buildYahooPayload(
       const weekendRatio = weekend / wdTotal;
       weekdayType = weekendRatio >= 0.4 ? "土日型" : weekendRatio <= 0.18 ? "平日型" : "満遍なく";
     }
+    // 送信側の広がり（宛先のユニーク数）
+    const fromYouTargets = mentionsFromYou.map((e) => ({
+      createdAt: e.createdAt,
+      screenName: (e.displayText ?? "").match(/@([A-Za-z0-9_]+)/)?.[1],
+    }));
+    const breadthTo = weeklyBreadth(mentionsToYou, nowSec);
+    const breadthFrom = weeklyBreadth(fromYouTargets, nowSec);
+    const maxSilenceDays = (() => {
+      if (tsSorted.length < 2) return undefined;
+      let maxGap = 0;
+      for (let i = 1; i < tsSorted.length; i++) {
+        const g = tsSorted[i] - tsSorted[i - 1];
+        if (g > maxGap) maxGap = g;
+      }
+      return Math.round((maxGap / 86400) * 10) / 10;
+    })();
+    const avgPostPerDay = Math.round((tsSorted.length / 35) * 10) / 10;
     const fromYouTexts = mentionsFromYou.map((e) => e.displayText ?? "");
     const toYouTexts = mentionsToYou.map((e) => e.displayText ?? "");
     // 自分の文体プロファイル
@@ -271,6 +302,23 @@ export async function buildYahooPayload(
     }
     const selfVocatives = [...vociGlobal.entries()].filter(([, cnt]) => cnt >= 2).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([v]) => v);
     if (selfVocatives.length) payload.selfVocatives = selfVocatives;
+    // 感情語プロファイル
+    const toneWords = {
+      thanks: /ありがと|ありが|サンクス|感謝|助かり/,
+      love: /好き|大好き|愛して|尊い|かわいい|可愛い/,
+      tired: /疲れ|つかれ|眠い|ねむい|だる|しんど|きつい/,
+      gloomy: /悲し|つら|辛い|不安|泣き|寂し/,
+    };
+    const tone = (() => {
+      if (selfTextsClean.length < 10) return undefined;
+      const n = selfTextsClean.length;
+      const res: Record<string, number> = {};
+      for (const [key, re] of Object.entries(toneWords)) {
+        const hit = selfTextsClean.filter((t) => re.test(t)).length;
+        res[key] = Math.round((hit / n) * 100);
+      }
+      return res;
+    })();
     payload.selfActivity = {
       topHours,
       fromYou7d,
@@ -280,6 +328,11 @@ export async function buildYahooPayload(
       postGapMin,
       weekdayType,
       words: topPhrases(fromYouTexts),
+      breadthTo,
+      breadthFrom,
+      maxSilenceDays,
+      avgPostPerDay,
+      tone,
     };
     const communityWords = topPhrases(toYouTexts);
     if (communityWords.length) payload.communityWords = communityWords;
@@ -370,7 +423,7 @@ function getCachedYahooPayload(name: string, buildCircle: boolean) {
   return unstable_cache(
     () => buildYahooPayload(name, buildCircle),
     [
-      "yahoo-mentions-v12",
+      "yahoo-mentions-v13",
       name.toLowerCase(),
       buildCircle ? "circle" : "counts",
     ],

@@ -26,6 +26,11 @@ type Props = {
     newConn14d?: number;
     dormant14d?: number;
     words?: string[];
+    breadthTo?: number[];
+    breadthFrom?: number[];
+    maxSilenceDays?: number;
+    avgPostPerDay?: number;
+    tone?: { thanks?: number; love?: number; tired?: number; gloomy?: number };
   } | null;
   /** その他の文脈（絵文字・最近のメンション・送信トップ） */
   extras?: {

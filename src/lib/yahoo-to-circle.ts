@@ -111,6 +111,8 @@ export async function yahooAggregatesToCircleUsers(
     vocative?: string;
     laugh?: string;
     avgLen?: number;
+    firstFrom?: string;
+    firstTo?: string;
   }[] = [];
   for (const k of keys) {
     if (k.toLowerCase() === self) continue;
@@ -140,6 +142,8 @@ export async function yahooAggregatesToCircleUsers(
         vocative: a?.vocative,
         laugh: a?.laugh,
         avgLen: a?.avgLen,
+        firstFrom: a?.firstText,
+        firstTo: b?.firstText,
       });
     }
   }
@@ -186,6 +190,8 @@ export async function yahooAggregatesToCircleUsers(
         vocative: keepDeep ? r.vocative : undefined,
         laugh: keepDeep ? r.laugh : undefined,
         avgLen: keepDeep ? r.avgLen : undefined,
+        firstFromThem: keepDeep ? r.firstFrom : undefined,
+        firstToThem: keepDeep ? r.firstTo : undefined,
         replyThemMin: keepDeep ? speeds.themMin : undefined,
         replyMeMin: keepDeep ? speeds.meMin : undefined,
         exchange: keepTop5 && r.hist.length ? r.hist.slice(0, 6).map((h) => ({ t: h.t, dir: h.dir, text: h.text })) : undefined,

@@ -64,6 +64,11 @@ type YahooMentionsResponse = {
     newConn14d?: number;
     dormant14d?: number;
     words?: string[];
+    breadthTo?: number[];
+    breadthFrom?: number[];
+    maxSilenceDays?: number;
+    avgPostPerDay?: number;
+    tone?: { thanks?: number; love?: number; tired?: number; gloomy?: number };
   };
   communityWords?: string[];
   selfStyle?: {
@@ -120,6 +125,11 @@ export function CircleApp(props: CircleAppProps = {}) {
     newConn14d?: number;
     dormant14d?: number;
     words?: string[];
+    breadthTo?: number[];
+    breadthFrom?: number[];
+    maxSilenceDays?: number;
+    avgPostPerDay?: number;
+    tone?: { thanks?: number; love?: number; tired?: number; gloomy?: number };
   } | null>(null);
   const [promptExtras, setPromptExtras] = useState<{
     selfEmojis?: string[];

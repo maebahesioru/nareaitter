@@ -131,6 +131,11 @@ export type SelfActivity = {
   newConn14d?: number;
   dormant14d?: number;
   words?: string[];
+  breadthTo?: number[];
+  breadthFrom?: number[];
+  maxSilenceDays?: number;
+  avgPostPerDay?: number;
+  tone?: { thanks?: number; love?: number; tired?: number; gloomy?: number };
 };
 
 function fmtDate(iso?: string): string {
@@ -204,6 +209,37 @@ function buildSelfSection(
     if (selfActivity.words?.length) {
       activityLines.push(isJa ? `自分の頻出ワード: ${selfActivity.words.join("・")}` : `My frequent words: ${selfActivity.words.join(", ")}`);
     }
+    if (selfActivity.breadthTo?.length) {
+      activityLines.push(
+        isJa
+          ? `交流の広がり(自分と関わった相手の人数・4週前→今週): ${selfActivity.breadthTo.join("→")}人`
+          : `Partners per week (4w ago -> now): ${selfActivity.breadthTo.join("->")}`,
+      );
+    }
+    if (selfActivity.breadthFrom?.length) {
+      activityLines.push(
+        isJa
+          ? `自分から絡んだ相手の人数: ${selfActivity.breadthFrom.join("→")}人`
+          : `Targets per week: ${selfActivity.breadthFrom.join("->")}`,
+      );
+    }
+    if (selfActivity.avgPostPerDay !== undefined) {
+      activityLines.push(isJa ? `平均投稿数: 約${selfActivity.avgPostPerDay}件/日` : `Avg posts: ~${selfActivity.avgPostPerDay}/day`);
+    }
+    if (selfActivity.maxSilenceDays !== undefined) {
+      activityLines.push(
+        isJa ? `この期間で最も長く沈黙したのは ${selfActivity.maxSilenceDays}日間` : `Longest silence: ${selfActivity.maxSilenceDays} days`,
+      );
+    }
+    if (selfActivity.tone) {
+      const t = selfActivity.tone;
+      const bits: string[] = [];
+      if (t.thanks) bits.push(isJa ? `感謝${t.thanks}%` : `thanks ${t.thanks}%`);
+      if (t.love) bits.push(isJa ? `好意${t.love}%` : `affection ${t.love}%`);
+      if (t.tired) bits.push(isJa ? `疲弊${t.tired}%` : `tired ${t.tired}%`);
+      if (t.gloomy) bits.push(isJa ? `悲観${t.gloomy}%` : `gloomy ${t.gloomy}%`);
+      if (bits.length) activityLines.push(isJa ? `感情語の出現率: ${bits.join("・")}` : `Emotion words: ${bits.join(", ")}`);
+    }
   }
   const tweetList = (selfTweets ?? []).map((t) => `- 「${t}」`).join("\n");
   const bioLine = self.profileDescription ? `\nプロフィール文: 「${self.profileDescription}」` : "";
@@ -263,6 +299,12 @@ function userLine(u: CircleUser, idx: number, isJa: boolean, selfTopHour?: numbe
   if (u.latestFromThem2) lines.push(`      相手の1つ前の投稿: 「${u.latestFromThem2}」`);
   if (u.latestToThem) lines.push(`      自分→相手の最近の投稿: 「${u.latestToThem}」`);
   if (u.latestToThem2) lines.push(`      自分→相手の1つ前の投稿: 「${u.latestToThem2}」`);
+  if (u.firstFromThem || u.firstToThem) {
+    const fm: string[] = [];
+    if (u.firstFromThem) fm.push(`相手「${u.firstFromThem}」`);
+    if (u.firstToThem) fm.push(`自分「${u.firstToThem}」`);
+    lines.push(`      初対面のやり取り: ${fm.join(" → ")}`);
+  }
   if (u.exchange?.length) {
     lines.push(`      【最近のやり取り（新しい順）】`);
     for (const x of u.exchange) {
