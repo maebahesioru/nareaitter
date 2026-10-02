@@ -511,7 +511,7 @@ const MEM_MAX = 64;
  * これがないと、実行時間リミット等で resolve も reject もされないビルドの promise が
  * pending に残り、以後の全リクエストがそれを待ち続けて永久ハングする（実測 2026-10-01）。
  */
-const MEM_BUILD_TIMEOUT_MS = 90_000;
+const MEM_BUILD_TIMEOUT_MS = 280_000;
 
 function withBuildTimeout<T>(p: Promise<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {

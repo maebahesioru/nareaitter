@@ -58,7 +58,7 @@ async function fetchAvatarFxtwitter(cleanScreenName: string): Promise<AvatarProb
   try {
     const res = await fetch(
       `${FX_USER_API}/${encodeURIComponent(cleanScreenName)}`,
-      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(6000) },
+      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(3500) },
     );
     if (res.status === 404 || res.status === 410) return { url: null, dead: true };
     if (!res.ok) return { url: null, dead: false };
@@ -81,7 +81,7 @@ async function fetchAvatarVxtwitter(cleanScreenName: string): Promise<AvatarProb
   try {
     const res = await fetch(
       `${VX_USER_API}/${encodeURIComponent(cleanScreenName)}`,
-      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(6000) },
+      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(3500) },
     );
     if (res.status === 404 || res.status === 410) return { url: null, dead: true };
     if (!res.ok) return { url: null, dead: false };
@@ -95,7 +95,7 @@ async function fetchAvatarVxtwitter(cleanScreenName: string): Promise<AvatarProb
 }
 
 /** 一時的な 429 / 空振り向け（長すぎると表全体が数分待ちになる） */
-const AVATAR_RETRY_ATTEMPTS = 3;
+const AVATAR_RETRY_ATTEMPTS = 2;
 const AVATAR_RETRY_BASE_DELAY_MS = 120;
 
 /**
@@ -156,6 +156,9 @@ function writeAvatarDeadMem(key: string): void {
  * 上記を最大 {@link AVATAR_RETRY_ATTEMPTS} 回。失敗のたびに間隔を空けて再試行（自分・相手共通）。
  * 両サービスが404を返したら確定死として即諦める（リトライラダーで数秒浪費しない）。
  */
+const avatarNoUrlMem = new Map<string, number>();
+const AVATAR_NO_URL_TTL_MS = 10 * 60 * 1000;
+
 export async function fetchXAvatarUrl(screenName: string): Promise<string | null> {
   const clean = screenName.replace(/^@/, "").trim();
   if (!clean) return null;
@@ -163,6 +166,8 @@ export async function fetchXAvatarUrl(screenName: string): Promise<string | null
   const cached = readAvatarMem(key);
   if (cached) return cached;
   if (isAvatarKnownDead(key)) return null;
+  const noUrlUntil = avatarNoUrlMem.get(key);
+  if (noUrlUntil && Date.now() < noUrlUntil) return null;
   for (let attempt = 0; attempt < AVATAR_RETRY_ATTEMPTS; attempt++) {
     if (attempt > 0) {
       await new Promise((r) =>
@@ -180,6 +185,9 @@ export async function fetchXAvatarUrl(screenName: string): Promise<string | null
       return null;
     }
   }
+  // タイムアウト等の失敗: 10分間は再試行しない（ビルド毎の36秒ラダー再支払いを防ぐ）
+  if (avatarNoUrlMem.size >= AVATAR_MEM_MAX) avatarNoUrlMem.clear();
+  avatarNoUrlMem.set(key, Date.now() + AVATAR_NO_URL_TTL_MS);
   return null;
 }
 
@@ -209,7 +217,7 @@ export async function fetchUserBio(screenName: string): Promise<string | null> {
   try {
     const res = await fetch(`${FX_USER_API}/${encodeURIComponent(clean)}`, {
       headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(6000),
+      signal: AbortSignal.timeout(3500),
     });
     if (!res.ok) {
       bioMem.set(key, { t: Date.now(), bio: null });
@@ -239,7 +247,7 @@ export async function resolveProfileData(screenName: string): Promise<XProfileDa
     try {
       const res = await fetch(
         `${FX_USER_API}/${encodeURIComponent(clean)}`,
-        { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(6000) },
+        { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(3500) },
       );
       if (!res.ok) continue;
       const data = (await res.json()) as FxTwitterUserResponse;
