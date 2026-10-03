@@ -6,6 +6,8 @@ export type YahooRealtimeEntry = {
   screenName?: string;
   name?: string;
   profileImage?: string;
+  /** 投稿者の数値ユーザーID（ハンドル変更の名寄せに使う） */
+  userId?: number | string;
   mentions?: { screenName?: string; name?: string; indices?: number[] }[];
   userUrl?: string;
   url?: string;

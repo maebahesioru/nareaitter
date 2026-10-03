@@ -472,6 +472,82 @@ export function cleanSnippet(raw: string | undefined, max = 80): string | undefi
   return t.length > max ? `${t.slice(0, cutSafe(t, max))}…` : t;
 }
 
+/**
+ * ハンドル変更の名寄せマップを作る（旧ハンドル → 現行ハンドル）。
+ *
+ * Yahoo entry の `userId` は同一アカウントなら不変なので、同じ userId で
+ * 複数の screenName が観測されたら「最新ツイートの screenName」を正とする。
+ * 30日窓内に旧ハンドル時代のツイートが残っていると、サークル上で同一人物が
+ * 2マスに増殖して見える問題（実ユーザー報告 2026-10）への対応。
+ */
+export function buildHandleAliasMap(
+  mentionsToYou: YahooRealtimeEntry[],
+  mentionsFromYou: YahooRealtimeEntry[],
+  selfName?: string,
+): Map<string, string> {
+  const latestByUser = new Map<string, { raw: string; t: number }>();
+  const observed = new Map<string, Set<string>>();
+  const add = (userId: unknown, screenName: unknown, t: unknown) => {
+    const uid = userId === undefined || userId === null ? "" : String(userId);
+    const raw = typeof screenName === "string" ? screenName.trim() : "";
+    if (!uid || !raw) return;
+    const lower = raw.toLowerCase();
+    let names = observed.get(uid);
+    if (!names) {
+      names = new Set();
+      observed.set(uid, names);
+    }
+    names.add(lower);
+    const tt = typeof t === "number" && t > 0 ? t : 0;
+    const cur = latestByUser.get(uid);
+    if (!cur || tt >= cur.t) latestByUser.set(uid, { raw, t: tt });
+  };
+  for (const e of mentionsToYou) add(e.userId, e.screenName, e.createdAt);
+  for (const e of mentionsFromYou) add(e.userId, e.screenName, e.createdAt);
+
+  const alias = new Map<string, string>();
+  const self = (selfName ?? "").trim().toLowerCase();
+  for (const [uid, names] of observed) {
+    if (names.size < 2) continue;
+    const canonicalRaw = latestByUser.get(uid)?.raw;
+    if (!canonicalRaw) continue;
+    const canonical = canonicalRaw.toLowerCase();
+    for (const n of names) {
+      if (n === canonical) continue;
+      // 検索対象の自分自身は書き換えない（selfは別扱い）
+      if (n === self) continue;
+      alias.set(n, canonicalRaw);
+    }
+  }
+  return alias;
+}
+
+/**
+ * alias に従って entry の screenName と mentions[].screenName を書き換える。
+ * （集計前に適用すると、旧ハンドル分のカウントが現行ハンドルへ自然に合算される）
+ */
+export function remapMentionHandles(
+  mentionsToYou: YahooRealtimeEntry[],
+  mentionsFromYou: YahooRealtimeEntry[],
+  alias: Map<string, string>,
+): void {
+  if (alias.size === 0) return;
+  const remap = (s: unknown): string | undefined => {
+    if (typeof s !== "string" || !s) return typeof s === "string" ? s : undefined;
+    return alias.get(s.trim().toLowerCase()) ?? s;
+  };
+  for (const e of mentionsToYou) {
+    const next = remap(e.screenName);
+    if (next !== undefined) e.screenName = next;
+  }
+  for (const e of mentionsFromYou) {
+    for (const m of e.mentions ?? []) {
+      const next = remap(m.screenName);
+      if (next !== undefined) m.screenName = next;
+    }
+  }
+}
+
 /** 1 相手あたりの集計（診断の文脈用に初回/7日数/1つ前の文面も持つ） */
 export type MentionPeerAgg = {
   n: number;

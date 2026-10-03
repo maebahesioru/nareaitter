@@ -2,12 +2,14 @@ import { unstable_cache } from "next/cache";
 import {
   aggregateMentionAuthors,
   aggregateMentionTargets,
+  buildHandleAliasMap,
   buildYahooAuthorProfileImageMap,
   cleanSnippet,
   extractEmojis,
   fetchMentionsBothParallel,
   fetchSelfRecentTweets,
   pickSelfProfileImageFromYahoo,
+  remapMentionHandles,
 } from "@/lib/yahoo-realtime-fetch";
 import { fetchUserBio } from "@/lib/x-profile-image";
 
@@ -159,6 +161,19 @@ export async function buildYahooPayload(
     console.log(
       `[payload] ${name} yahoo=${Date.now() - T0}ms to=${mentionsToYou.length} from=${mentionsFromYou.length}`,
     );
+  }
+
+  // ハンドル変更の名寄せ（旧ハンドルのツイートが同一人物の別エントリとして
+  // サークルに増殖して見える問題への対応。userId で同一人物を判定して現行名に統合）
+  const handleAlias = buildHandleAliasMap(mentionsToYou, mentionsFromYou, name);
+  if (handleAlias.size > 0) {
+    remapMentionHandles(mentionsToYou, mentionsFromYou, handleAlias);
+    if (buildCircle) {
+      const pairs = [...handleAlias.entries()]
+        .map(([from, to]) => `${from}→${to}`)
+        .join(", ");
+      console.log(`[payload] ${name} handle-alias merged: ${pairs}`);
+    }
   }
 
   const authorsToYou = aggregateMentionAuthors(mentionsToYou);

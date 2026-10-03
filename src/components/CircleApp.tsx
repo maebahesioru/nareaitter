@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CircleUser, SelfProfile } from "@/types/circle";
 import {
   readYahooCircleCache,
@@ -142,6 +142,7 @@ export function CircleApp(props: CircleAppProps = {}) {
     fromYou: number;
   } | null>(null);
   const [maxUsers, setMaxUsers] = useState(9999);
+  const [bidirOnly, setBidirOnly] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("circle");
   const [selfTweets, setSelfTweets] = useState<string[]>([]);
   const [selfActivity, setSelfActivity] = useState<{
@@ -301,6 +302,17 @@ export function CircleApp(props: CircleAppProps = {}) {
     setYahooHandle(name);
   }, [initialScreenName]);
 
+  /** 「双方向のみ」: お互いにメンションし合っている相手だけに絞る（片方向だけの相手を除外） */
+  const circleUsers = useMemo(
+    () =>
+      bidirOnly
+        ? users.filter(
+            (u) => (u.mentionsReceived ?? 0) > 0 && (u.mentionsSent ?? 0) > 0,
+          )
+        : users,
+    [users, bidirOnly],
+  );
+
   return (
     <div className="mx-auto grid w-full max-w-[1600px] grid-cols-1 gap-x-8 px-4 pb-16 pt-10 sm:px-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,768px)_minmax(0,1fr)]">
       <aside className="hidden xl:block">
@@ -388,18 +400,34 @@ export function CircleApp(props: CircleAppProps = {}) {
           </p>
         )}
         {users.length > 0 && (
-          <div className="mt-4 flex items-center gap-3">
-            <label className="shrink-0 text-xs font-medium text-zinc-600 dark:text-zinc-500">
-              表示人数: <strong className="text-zinc-900 dark:text-zinc-200">{Math.min(maxUsers, users.length)}</strong>/{users.length}
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            {circleUsers.length > 0 && (
+              <>
+                <label className="shrink-0 text-xs font-medium text-zinc-600 dark:text-zinc-500">
+                  表示人数: <strong className="text-zinc-900 dark:text-zinc-200">{Math.min(maxUsers, circleUsers.length)}</strong>/{circleUsers.length}
+                </label>
+                <input
+                  type="range"
+                  min={1}
+                  max={circleUsers.length}
+                  value={Math.min(maxUsers, circleUsers.length)}
+                  onChange={(e) => setMaxUsers(Number(e.target.value))}
+                  className="min-w-[120px] flex-1"
+                />
+              </>
+            )}
+            <label
+              className="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-500"
+              title={t.bidirOnlyHint}
+            >
+              <input
+                type="checkbox"
+                checked={bidirOnly}
+                onChange={(e) => setBidirOnly(e.target.checked)}
+                className="h-3.5 w-3.5 accent-sky-500"
+              />
+              {t.bidirOnly}
             </label>
-            <input
-              type="range"
-              min={1}
-              max={users.length}
-              value={maxUsers}
-              onChange={(e) => setMaxUsers(Number(e.target.value))}
-              className="flex-1"
-            />
           </div>
         )}
       </section>
@@ -492,7 +520,7 @@ export function CircleApp(props: CircleAppProps = {}) {
             </p>
             {viewMode === "circle" ? (
               <>
-                <InteractionCircle self={self} users={users} maxUsers={maxUsers} />
+                <InteractionCircle self={self} users={circleUsers} maxUsers={maxUsers} />
                 <p className="mt-3 text-center text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
                   {t.tableHint}
                 </p>
@@ -513,7 +541,7 @@ export function CircleApp(props: CircleAppProps = {}) {
             )}
           </>
         ) : (
-          <InteractionCircle self={self} users={users} maxUsers={maxUsers} />
+          <InteractionCircle self={self} users={circleUsers} maxUsers={maxUsers} />
         )}
       </div>
 

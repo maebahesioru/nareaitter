@@ -42,6 +42,8 @@ export type Messages = {
   saveLongPressHint: string;
   saveLongPressClose: string;
   postSpamTip: string;
+  bidirOnly: string;
+  bidirOnlyHint: string;
   themeLight: string;
   themeDark: string;
   donationTitle: string;
@@ -141,6 +143,9 @@ export const messages: Record<Locale, Messages> = {
     saveLongPressClose: "閉じる",
     postSpamTip:
       "※結果を投稿するとき、文面によっては X のスパム判定を受ける場合があります。一言変えると引っかかりにくくなるようです。",
+    bidirOnly: "双方向のみ",
+    bidirOnlyHint:
+      "お互いにメンションし合っている相手だけを表示します（片方向だけの相手を除外）",
     themeLight: "ライトモードに切り替え",
     themeDark: "ダークモードに切り替え",
     donationTitle: "寄付のお願い",
@@ -241,6 +246,9 @@ export const messages: Record<Locale, Messages> = {
     saveLongPressClose: "Close",
     postSpamTip:
       "Note: X may flag some result posts as spam. Changing the wording slightly helps avoid it.",
+    bidirOnly: "Mutual only",
+    bidirOnlyHint:
+      "Show only people who mention each other in both directions",
     themeLight: "Switch to light mode",
     themeDark: "Switch to dark mode",
     donationTitle: "Support this project",
