@@ -680,6 +680,17 @@ export function CircleApp(props: CircleAppProps = {}) {
       <footer className="space-y-2 text-center text-xs leading-relaxed text-zinc-500 dark:text-zinc-600">
         <p>{t.footerLegal}</p>
         <p>
+          {t.footerSister}{" "}
+          <a
+            href="https://tsuittara-yoron.hikamers.app"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-sky-600 underline-offset-2 hover:text-sky-500 hover:underline dark:text-sky-400/90 dark:hover:text-sky-300"
+          >
+            {t.footerSisterName}
+          </a>
+        </p>
+        <p>
           {t.footerBy}{" "}
           <a
             href="https://x.com/maebahesioru2"

@@ -20,6 +20,8 @@ export type Messages = {
   tableHint: string;
   footerLegal: string;
   footerBy: string;
+  footerSister: string;
+  footerSisterName: string;
   emptyPrompt: string;
   noPeers: string;
   ariaCircle: string;
@@ -121,6 +123,8 @@ export const messages: Record<Locale, Messages> = {
     footerLegal:
       "収集・集計は過去30日分の公開データに限ります。表示は公開の情報をもとにした目安です。結果が欠けたりずれる場合があります。本サービスからあなたの X にログインしたり、勝手に投稿したりすることはありません。",
     footerBy: "制作者:",
+    footerSister: "姉妹サイト:",
+    footerSisterName: "ツイッタラー世論調査",
     emptyPrompt:
       "上のフォームで X のユーザー名を入力し、「サークルを表示」でここに表示されます。",
     noPeers:
@@ -233,6 +237,8 @@ export const messages: Record<Locale, Messages> = {
     footerLegal:
       "Aggregation covers public data from the last 30 days only. Display is indicative and may be incomplete. This service does not log into your X account or post on your behalf.",
     footerBy: "Author:",
+    footerSister: "Sister site:",
+    footerSisterName: "Tsuittara Yoron Chosa",
     emptyPrompt:
       "Enter an X username above and tap “Show circle” to display it here.",
     noPeers:
