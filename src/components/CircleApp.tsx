@@ -143,6 +143,8 @@ export function CircleApp(props: CircleAppProps = {}) {
   } | null>(null);
   const [maxUsers, setMaxUsers] = useState(9999);
   const [bidirOnly, setBidirOnly] = useState(false);
+  const [highlightInput, setHighlightInput] = useState("");
+  const [highlight, setHighlight] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("circle");
   const [selfTweets, setSelfTweets] = useState<string[]>([]);
   const [selfActivity, setSelfActivity] = useState<{
@@ -313,6 +315,43 @@ export function CircleApp(props: CircleAppProps = {}) {
     [users, bidirOnly],
   );
 
+  // 自分のIDハイライト: 前回の入力を復元（保存画像の「自分を探す」用途）
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("nareai-highlight");
+      if (saved) {
+        setHighlightInput(saved);
+        setHighlight(saved);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // 入力のデバウンス（タイプごとにキャンバスを再描画しない）
+  useEffect(() => {
+    const v = highlightInput.trim().replace(/^@/, "").toLowerCase();
+    const id = window.setTimeout(() => {
+      setHighlight(v);
+      try {
+        window.localStorage.setItem("nareai-highlight", v);
+      } catch {
+        /* ignore */
+      }
+    }, 350);
+    return () => window.clearTimeout(id);
+  }, [highlightInput]);
+
+  const highlightFound = useMemo(() => {
+    if (!highlight) return false;
+    if (self.screenName && self.screenName.toLowerCase() === highlight) {
+      return true;
+    }
+    return circleUsers.some(
+      (u) => (u.screenName ?? "").toLowerCase() === highlight,
+    );
+  }, [highlight, circleUsers, self.screenName]);
+
   return (
     <div className="mx-auto grid w-full max-w-[1600px] grid-cols-1 gap-x-8 px-4 pb-16 pt-10 sm:px-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,768px)_minmax(0,1fr)]">
       <aside className="hidden xl:block">
@@ -428,6 +467,28 @@ export function CircleApp(props: CircleAppProps = {}) {
               />
               {t.bidirOnly}
             </label>
+            <input
+              type="text"
+              value={highlightInput}
+              onChange={(e) => setHighlightInput(e.target.value)}
+              placeholder={t.highlightPlaceholder}
+              title={t.highlightPlaceholder}
+              suppressHydrationWarning
+              className="w-36 shrink-0 rounded-md border border-zinc-300/90 bg-white/80 px-2 py-1 text-xs text-zinc-800 outline-none transition placeholder:text-zinc-400 focus:border-sky-400 dark:border-white/15 dark:bg-zinc-800/70 dark:text-zinc-200 dark:placeholder:text-zinc-500 sm:w-44"
+            />
+            {highlight && (
+              <span
+                className={`shrink-0 text-[10px] font-medium ${
+                  highlightFound
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-amber-600 dark:text-amber-400"
+                }`}
+              >
+                {highlightFound
+                  ? `✓ ${t.highlightStatusFound}`
+                  : t.highlightStatusNotFound}
+              </span>
+            )}
           </div>
         )}
       </section>
@@ -446,7 +507,10 @@ export function CircleApp(props: CircleAppProps = {}) {
         className="overflow-visible rounded-2xl border border-zinc-200/80 bg-zinc-50 p-4 dark:border-white/10 dark:bg-[#09090b] sm:p-6"
       >
         {self.screenName && users.length > 0 && (
-          <div className="mb-4 flex flex-wrap justify-center gap-2">
+          <div
+            data-exclude-from-capture
+            className="mb-4 flex flex-wrap justify-center gap-2"
+          >
             <button
               type="button"
               onClick={() => setViewMode("circle")}
@@ -520,10 +584,23 @@ export function CircleApp(props: CircleAppProps = {}) {
             </p>
             {viewMode === "circle" ? (
               <>
-                <InteractionCircle self={self} users={circleUsers} maxUsers={maxUsers} />
+                <InteractionCircle
+                  self={self}
+                  users={circleUsers}
+                  maxUsers={maxUsers}
+                  highlight={highlight || undefined}
+                />
                 <p className="mt-3 text-center text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
                   {t.tableHint}
                 </p>
+                {users.length > 0 && users.length < 10 && (
+                  <p
+                    data-exclude-from-capture
+                    className="mt-1 text-center text-xs leading-relaxed text-zinc-500 dark:text-zinc-500"
+                  >
+                    {t.fewPeersNote}
+                  </p>
+                )}
               </>
             ) : viewMode === "table" ? (
               <InteractionTable users={users} />
@@ -541,7 +618,17 @@ export function CircleApp(props: CircleAppProps = {}) {
             )}
           </>
         ) : (
-          <InteractionCircle self={self} users={circleUsers} maxUsers={maxUsers} />
+          <InteractionCircle
+            self={self}
+            users={circleUsers}
+            maxUsers={maxUsers}
+            highlight={highlight || undefined}
+          />
+        )}
+        {self.screenName && users.length > 0 && (
+          <p className="mt-3 text-center text-[10px] leading-relaxed text-zinc-400 dark:text-zinc-500">
+            {t.captureCredit}
+          </p>
         )}
       </div>
 

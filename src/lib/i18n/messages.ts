@@ -44,6 +44,11 @@ export type Messages = {
   postSpamTip: string;
   bidirOnly: string;
   bidirOnlyHint: string;
+  highlightPlaceholder: string;
+  highlightStatusFound: string;
+  highlightStatusNotFound: string;
+  captureCredit: string;
+  fewPeersNote: string;
   themeLight: string;
   themeDark: string;
   donationTitle: string;
@@ -147,6 +152,12 @@ export const messages: Record<Locale, Messages> = {
     bidirOnly: "双方向のみ",
     bidirOnlyHint:
       "お互いにメンションし合っている相手だけを表示します（片方向だけの相手を除外）",
+    highlightPlaceholder: "自分のIDをハイライト",
+    highlightStatusFound: "ハイライト中",
+    highlightStatusNotFound: "このサークルには見つかりません",
+    captureCredit: "nareaitter.hikamers.app（ログイン不要・連携なし）",
+    fewPeersNote:
+      "交流が少なめです。過去30日の公開リプライ・メンションが対象のため、交流が増えると表示も増えます。",
     themeLight: "ライトモードに切り替え",
     themeDark: "ダークモードに切り替え",
     donationTitle: "寄付のお願い",
@@ -252,6 +263,12 @@ export const messages: Record<Locale, Messages> = {
     bidirOnly: "Mutual only",
     bidirOnlyHint:
       "Show only people who mention each other in both directions",
+    highlightPlaceholder: "Highlight my handle",
+    highlightStatusFound: "Highlighted",
+    highlightStatusNotFound: "Not found in this circle",
+    captureCredit: "nareaitter.hikamers.app (no login, no linking)",
+    fewPeersNote:
+      "Few interactions so far. Only public replies and mentions from the last 30 days count — this grows as you interact.",
     themeLight: "Switch to light mode",
     themeDark: "Switch to dark mode",
     donationTitle: "Support this project",

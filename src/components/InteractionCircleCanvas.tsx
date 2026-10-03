@@ -12,6 +12,8 @@ type Props = {
   usersWithIcons: CircleUser[];
   /** アイコンを描画できなかったユーザーを通知（親側で自動除外→次の候補者を繰り上げ） */
   onMissing?: (screenNames: string[]) => void;
+  /** このID（小文字・@なし）のアイコンにハイライト枠を描く */
+  highlight?: string;
 };
 
 /** preview が死んでいても hd で描けるように順に試す */
@@ -293,7 +295,7 @@ function halfSelfForCanvas(W: number, nPeers: number): number {
   return W * Math.min(0.26, Math.max(0.155, 0.175 + 0.082 / s));
 }
 
-export function InteractionCircleCanvas({ self, usersWithIcons, onMissing }: Props) {
+export function InteractionCircleCanvas({ self, usersWithIcons, onMissing, highlight }: Props) {
   const { t } = useLocale();
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -641,6 +643,48 @@ export function InteractionCircleCanvas({ self, usersWithIcons, onMissing }: Pro
         } catch { /* skip */ }
       }
 
+      // 自分のIDハイライト（見つかったセルに枠を描く）
+      if (highlight) {
+        const h = highlight.trim().toLowerCase().replace(/^@/, "");
+        let target: { cx: number; cy: number; half: number } | null = null;
+        if (h) {
+          for (let i = 0; i < total; i++) {
+            const u = slots[i]?.user;
+            if (u && (u.screenName ?? "").toLowerCase() === h) {
+              const cell = peerCells[i];
+              if (cell) {
+                target = {
+                  cx: cell.cx,
+                  cy: cell.cy,
+                  half: peerHalfDraw(cell.cellW, cell.cellH),
+                };
+              }
+              break;
+            }
+          }
+          if (!target && self.screenName && self.screenName.toLowerCase() === h) {
+            target = { cx: W / 2, cy: W / 2, half: halfSelf };
+          }
+        }
+        if (target) {
+          const ringW = Math.max(3, target.half * 0.1);
+          ctx.save();
+          // 白フチ（背景とのコントラスト）
+          ctx.beginPath();
+          ctx.arc(target.cx, target.cy, target.half + ringW, 0, Math.PI * 2);
+          ctx.lineWidth = ringW + 2.5;
+          ctx.strokeStyle = "rgba(255,255,255,0.92)";
+          ctx.stroke();
+          // スカイの枠
+          ctx.beginPath();
+          ctx.arc(target.cx, target.cy, target.half + ringW, 0, Math.PI * 2);
+          ctx.lineWidth = ringW;
+          ctx.strokeStyle = "#0ea5e9";
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+
       if (!cancelled) setCaptureReady(true);
     };
 
@@ -651,7 +695,7 @@ export function InteractionCircleCanvas({ self, usersWithIcons, onMissing }: Pro
       blobRevokeRef.current?.();
       blobRevokeRef.current = null;
     };
-  }, [sizePx, self, slots]);
+  }, [sizePx, self, slots, highlight]);
 
   return (
     <div

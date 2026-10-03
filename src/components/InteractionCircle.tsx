@@ -9,9 +9,11 @@ type Props = {
   self: SelfProfile;
   users: CircleUser[];
   maxUsers?: number;
+  /** このID（小文字・@なし）のアイコンにハイライト枠を描く */
+  highlight?: string;
 };
 
-export function InteractionCircle({ self, users, maxUsers }: Props) {
+export function InteractionCircle({ self, users, maxUsers, highlight }: Props) {
   const { t } = useLocale();
   // アイコンを描画できなかったユーザーを自動除外し、次の候補者を繰り上げる
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
@@ -59,6 +61,7 @@ export function InteractionCircle({ self, users, maxUsers }: Props) {
                 self={self}
                 usersWithIcons={usersWithIcons}
                 onMissing={handleMissing}
+                highlight={highlight}
               />
             )}
             <div className="pointer-events-none absolute inset-0 z-[4] flex items-center justify-center px-3">
