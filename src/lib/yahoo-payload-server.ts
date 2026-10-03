@@ -554,7 +554,18 @@ type MemEntry = {
   cooldownUntil?: number;
 };
 
-const memCache = new Map<string, MemEntry>();
+/**
+ * ペイロードのメモリキャッシュ。
+ * ⚠️ Next.js はルート（ページ/API）ごとにサーバーモジュールを別バンドル化することがあり、
+ * 単純な `new Map()` だとページ側とAPI側で**別インスタンス**になってしまう（実測 2026-10-03:
+ * APIで温めたペイロードがページSSRから見えなかった）。globalThis に載せて全バンドルで共有する。
+ */
+const globalForPayload = globalThis as unknown as {
+  __nareaiPayloadMemCache?: Map<string, MemEntry>;
+};
+const memCache: Map<string, MemEntry> =
+  globalForPayload.__nareaiPayloadMemCache ?? new Map<string, MemEntry>();
+globalForPayload.__nareaiPayloadMemCache = memCache;
 
 export type ServeMode = "fresh" | "swr" | "build";
 
@@ -623,4 +634,18 @@ function serveWithSWR(
 export function getServedYahooPayload(name: string, buildCircle: boolean) {
   const key = `${name.toLowerCase()}:${buildCircle ? "circle" : "counts"}`;
   return serveWithSWR(key, () => getCachedYahooPayload(name, buildCircle));
+}
+
+/**
+ * メモリキャッシュに既にある場合だけ返す（ビルドしない）。
+ * ハンドルページのSEO要約（SSR）用 — コールドでもページを高速に保つため、
+ * ここでは絶対にフェッチしない。
+ */
+export function peekServedYahooPayload(
+  name: string,
+  buildCircle: boolean,
+): Record<string, unknown> | null {
+  const key = `${name.toLowerCase()}:${buildCircle ? "circle" : "counts"}`;
+  const entry = memCache.get(key);
+  return entry?.payload ?? null;
 }

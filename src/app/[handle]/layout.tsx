@@ -12,16 +12,21 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     /* keep raw */
   }
   const sn = label.replace(/^@/, "");
-  const title = `@${sn}`;
-  const pageDesc = `@${sn} の交流サークル（目安）。過去30日分の公開データに基づきます。ログイン不要。`;
+  const title = `@${sn} の馴れ合い表`;
+  const pageDesc = `@${sn} の馴れ合い表（馴れ合いサークル）。Xの公開データから交流相手をグリッド表示。ログイン不要・勝手に投稿されません。`;
 
   const path = `/${encodeURIComponent(handle)}`;
+  const enPath = `/en/${encodeURIComponent(handle)}`;
 
   return {
     title,
     description: pageDesc,
     alternates: {
       canonical: path,
+      languages: {
+        ja: path,
+        en: enPath,
+      },
     },
     openGraph: {
       title,

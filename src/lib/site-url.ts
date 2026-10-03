@@ -16,7 +16,7 @@ export function getSiteUrl(): string {
   if (cfPages) {
     return cfPages.replace(/\/$/, "").replace(/^http:\/\//i, "https://");
   }
-  return "https://nareaitter.hikamer.f5.si";
+  return "https://nareaitter.hikamers.app";
 }
 
 export function getMetadataBase(): URL {
