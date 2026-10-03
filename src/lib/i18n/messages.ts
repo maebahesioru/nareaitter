@@ -118,7 +118,8 @@ export const messages: Record<Locale, Messages> = {
     footerBy: "制作者:",
     emptyPrompt:
       "上のフォームで X のユーザー名を入力し、「サークルを表示」でここに表示されます。",
-    noPeers: "周りに表示できるユーザーがいませんでした",
+    noPeers:
+      "表示できる相手が見つかりませんでした（過去30日の公開リプライ・メンションが対象です。交流が増えると表示されます）",
     ariaCircle: "の交流サークル",
     ariaCircleDefault: "交流サークル",
     shareTitle: "Twitter馴れ合いサークル",
@@ -158,7 +159,8 @@ export const messages: Record<Locale, Messages> = {
     langJa: "日本語",
     langEn: "English",
     errEnterName: "X のユーザー名（例: nhk_news）を入力してください。",
-    errFetch: "取得に失敗しました。",
+    errFetch:
+      "取得に失敗しました。サーバーが混み合っているか、一時的な問題の可能性があります。少し待ってからもう一度お試しください。",
     tabCircle: "サークル",
     tabTable: "交流一覧",
     tabFamily: "家族ツリー",
@@ -222,7 +224,8 @@ export const messages: Record<Locale, Messages> = {
     footerBy: "Author:",
     emptyPrompt:
       "Enter an X username above and tap “Show circle” to display it here.",
-    noPeers: "No surrounding users to display",
+    noPeers:
+      "No one to display yet. Only public replies and mentions from the last 30 days count — it grows as you interact.",
     ariaCircle: " mutual interaction circle",
     ariaCircleDefault: "Interaction circle",
     shareTitle: "Twitter Mutual Circle",
@@ -261,7 +264,8 @@ export const messages: Record<Locale, Messages> = {
     langJa: "日本語",
     langEn: "English",
     errEnterName: "Enter an X username (e.g. nhk_news).",
-    errFetch: "Failed to load data.",
+    errFetch:
+      "Failed to load data. The server may be busy or having a temporary issue — please wait a moment and try again.",
     tabCircle: "Circle",
     tabTable: "Interactions",
     tabFamily: "Family Tree",
