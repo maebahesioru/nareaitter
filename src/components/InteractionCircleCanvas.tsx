@@ -399,7 +399,16 @@ export function InteractionCircleCanvas({ self, usersWithIcons, onMissing }: Pro
       const POOL = 36;
       /** セルが小さいときは 48px のプレビューで十分なので HD は取得しない（通信削減） */
       const HD_UPGRADE_MIN_SIDE_PX = 36;
-      const SPRITE_CELL = 48;
+      /**
+       * スプライトのセル辺（px）。描画セルの実寸（CSS px × DPR）が大きいほど解像度を上げる。
+       * 少人数サークルはセルが大きくなり、48px セルのままだと拡大描画でぼやけるため。
+       * サーバーは大きいセルでは HD アバターを優先して合成する。
+       */
+      const maxPeerSideDevice =
+        peerCells.reduce((m, c) => Math.max(m, Math.min(c.cellW, c.cellH)), 0) *
+        dpr;
+      const SPRITE_CELL =
+        maxPeerSideDevice > 120 ? 128 : maxPeerSideDevice > 60 ? 96 : 48;
       const SPRITE_COLS = 10;
       const SPRITE_CHUNK = 100;
       const SPRITE_POOL = 12;
@@ -450,7 +459,7 @@ export function InteractionCircleCanvas({ self, usersWithIcons, onMissing }: Pro
       ): Promise<SpriteHit> => {
         const url = `/api/avatar-sprite?screenName=${encodeURIComponent(
           self.screenName,
-        )}&from=${start}&count=${count}&sig=${sig}&rev=${SPRITE_REV}`;
+        )}&from=${start}&count=${count}&sig=${sig}&rev=${SPRITE_REV}&cell=${SPRITE_CELL}`;
         let res: Response;
         try {
           res = await fetch(url, { signal: AbortSignal.timeout(15000) });

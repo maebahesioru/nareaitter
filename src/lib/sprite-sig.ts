@@ -16,11 +16,16 @@ type PreviewLike = { avatarUrlPreview?: string | null; avatarUrl?: string | null
  * 合成ロジックを変えてエッジ/オリジンの古いシートを捨てたいときに +1 する
  * （クライアントURLの rev パラメータとオリジンの unstable_cache キーの両方に入る）。
  */
-export const SPRITE_REV = "6";
+export const SPRITE_REV = "7";
 
 /** セルに使うURL（プレビュー優先、無ければHD） */
 export function spriteCellUrl(user: PreviewLike): string {
   return (user.avatarUrlPreview ?? "").trim() || (user.avatarUrl ?? "").trim();
+}
+
+/** 高画質セル用のURL（HD優先、無ければプレビュー）。セル辺が大きいサークルで使う */
+export function spriteCellUrlLarge(user: PreviewLike): string {
+  return (user.avatarUrl ?? "").trim() || (user.avatarUrlPreview ?? "").trim();
 }
 
 function fnv1a32(text: string): number {

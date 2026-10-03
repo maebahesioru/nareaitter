@@ -16,6 +16,22 @@ type Props = {
   disabledReason?: string;
 };
 
+/**
+ * iOS とアプリ内ブラウザ（X/Instagram等のWebView）では a[download] が
+ * 動かない・写真に届かないケースが多い（実ユーザー報告あり）。
+ * その場合は画像を全画面表示して「長押しで保存」してもらう。
+ */
+function needsLongPressSave(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  const isIOS =
+    /iPhone|iPad|iPod/.test(ua) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const isWebview =
+    /Twitter|FBAN|FBAV|Instagram|Line\/|MicroMessenger|Snapchat/i.test(ua);
+  return isIOS || isWebview;
+}
+
 export function SaveCircleImageButton({
   targetRef,
   fileNameBase,
@@ -25,6 +41,7 @@ export function SaveCircleImageButton({
   const { t } = useLocale();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
   const { resolvedTheme } = useTheme();
 
   const save = useCallback(async () => {
@@ -39,6 +56,10 @@ export function SaveCircleImageButton({
     try {
       const isLight = resolvedTheme === "light";
       const dataUrl = await captureCircleElementToPngDataUrl(el, isLight);
+      if (needsLongPressSave()) {
+        setPreview(dataUrl);
+        return;
+      }
       const stamp = new Date()
         .toISOString()
         .slice(0, 19)
@@ -78,6 +99,31 @@ export function SaveCircleImageButton({
         <p className="max-w-md text-center text-xs text-rose-600 dark:text-rose-400" role="alert">
           {err}
         </p>
+      )}
+      {preview && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-black/85 p-5"
+          role="dialog"
+          aria-modal="true"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={preview}
+            alt=""
+            draggable={false}
+            className="max-h-[72vh] max-w-full rounded-lg shadow-2xl"
+          />
+          <p className="max-w-md text-center text-sm leading-relaxed text-white">
+            {t.saveLongPressHint}
+          </p>
+          <button
+            type="button"
+            onClick={() => setPreview(null)}
+            className="rounded-xl border border-white/25 bg-white/10 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-white/20"
+          >
+            {t.saveLongPressClose}
+          </button>
+        </div>
       )}
     </div>
   );

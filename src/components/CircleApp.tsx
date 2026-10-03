@@ -517,7 +517,8 @@ export function CircleApp(props: CircleAppProps = {}) {
         )}
       </div>
 
-      <div className="flex flex-wrap items-start justify-center gap-6">
+      <div className="flex flex-col items-center gap-3">
+        <div className="flex flex-wrap items-start justify-center gap-6">
         <ShareButton
           targetRef={captureRef}
           profileScreenName={self.screenName || undefined}
@@ -551,6 +552,10 @@ export function CircleApp(props: CircleAppProps = {}) {
               : "twitter-nareai-circle"
           }
         />
+        </div>
+        <p className="max-w-xl text-center text-xs leading-relaxed text-zinc-500 dark:text-zinc-600">
+          {t.postSpamTip}
+        </p>
       </div>
 
       <div className="xl:hidden">

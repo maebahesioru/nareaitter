@@ -3,7 +3,7 @@ import { unstable_cache } from "next/cache";
 import sharp, { type OverlayOptions } from "sharp";
 import { fetchProxiedImageUpstream, UpstreamImageError } from "@/lib/image-proxy-upstream";
 import { resolveCircleAvatarUrl } from "@/lib/x-profile-image";
-import { deadMaskToHex, spriteCellUrl, spriteSliceSig } from "@/lib/sprite-sig";
+import { deadMaskToHex, spriteCellUrl, spriteCellUrlLarge, spriteSliceSig } from "@/lib/sprite-sig";
 import {
   findCircleUsersForSig,
   getServedYahooPayload,
@@ -12,7 +12,7 @@ import { normalizeScreenName } from "@/lib/yahoo-realtime-fetch";
 
 export const maxDuration = 60;
 
-/** 1セルのピクセル数（rts-pctr のプレビュー実寸に合わせる） */
+/** 1セルのピクセル数（rts-pctr のプレビュー実寸に合わせた既定値） */
 const CELL = 48;
 /** 横に並べるセル数 */
 const COLS = 10;
@@ -20,6 +20,11 @@ const COLS = 10;
 const MAX_CELLS = 120;
 /** 上流フェッチの並列上限 */
 const UPSTREAM_CONCURRENCY = 32;
+/**
+ * クライアントが要求できるセル辺（px）。セル辺が大きくなる少人数サークルでは
+ * 48px だと拡大描画でぼやけるため、大きいセルを許容する（HD URL を優先使用）。
+ */
+const ALLOWED_CELLS = new Set([48, 96, 128]);
 
 type CircleUserLite = {
   screenName?: string | null;
@@ -60,6 +65,8 @@ export async function GET(req: NextRequest) {
   const countRaw = Number.parseInt(sp.get("count") ?? "100", 10) || 100;
   const count = Math.min(MAX_CELLS, Math.max(1, countRaw));
   const sig = (sp.get("sig") ?? "").toLowerCase();
+  const cellRaw = Number.parseInt(sp.get("cell") ?? "", 10) || CELL;
+  const cell = ALLOWED_CELLS.has(cellRaw) ? cellRaw : CELL;
 
   if (!name) {
     return NextResponse.json({ error: "screenName が必要です。" }, { status: 400 });
@@ -94,6 +101,7 @@ export async function GET(req: NextRequest) {
   }
 
   const rows = Math.ceil(slice.length / COLS);
+  const hiRes = cell > CELL;
 
   // 合成結果をオリジン側にもキャッシュ（エッジを通過した2人目以降・別colo向け）
   const composed = await unstable_cache(
@@ -108,13 +116,13 @@ export async function GET(req: NextRequest) {
         try {
           const { arrayBuffer } = await fetchProxiedImageUpstream(url);
           const cellBuf = await sharp(Buffer.from(arrayBuffer))
-            .resize(CELL, CELL, { fit: "cover" })
+            .resize(cell, cell, { fit: "cover" })
             .jpeg({ quality: 82 })
             .toBuffer();
           composites.push({
             input: cellBuf,
-            left: (i % COLS) * CELL,
-            top: Math.floor(i / COLS) * CELL,
+            left: (i % COLS) * cell,
+            top: Math.floor(i / COLS) * cell,
           });
           return { ok: true };
         } catch (e) {
@@ -125,21 +133,31 @@ export async function GET(req: NextRequest) {
 
       /**
        * 1 セルを描く。
-       * - まずペイロードの URL（プレビュー優先）で描画
+       * - 通常セル(48px): ペイロードの URL（プレビュー優先）で描画
+       * - 高画質セル(96/128px): HD（pbs/fx系）を優先し、失敗時はプレビューで妥協
+       *   （セルが大きい少人数サークルで 48px プレビューの拡大ぼやけを防ぐ）
        * - 404系（期限切れの Yahoo プレビュー等）だけ fx/vx で現行アバターを救済。
        *   ⚠️ 一時失敗（timeout）で fx を撃つと、内蔵リトライのラダー（最長36秒/人）が
        *   合成全体を数十秒に伸ばし、クライアントの15秒タイムアウト→個別取得フォールバック
        *   を誘発して多重合成の悪循環になる（実測 2026-10-01）。一時失敗は2周目リトライのみ。
        */
       const composeCell = async (u: CircleUserLite, i: number): Promise<void> => {
-        const raw = spriteCellUrl(u);
-        const first = await drawCell(raw, i);
-        if (first.ok) {
+        const primary = hiRes ? spriteCellUrlLarge(u) : spriteCellUrl(u);
+        const secondary = hiRes ? spriteCellUrl(u) : "";
+        let r = await drawCell(primary, i);
+        if (r.ok) {
           dead[i] = false;
           return;
         }
+        if (hiRes && secondary.trim() && secondary !== primary) {
+          r = await drawCell(secondary, i);
+          if (r.ok) {
+            dead[i] = false;
+            return;
+          }
+        }
         const screen = (u.screenName ?? "").trim();
-        const permanent = first.permanent || !raw.trim();
+        const permanent = r.permanent || !primary.trim();
         if (permanent && screen) {
           const alt = await resolveCircleAvatarUrl(screen);
           if (alt && (await drawCell(alt, i)).ok) {
@@ -167,8 +185,8 @@ export async function GET(req: NextRequest) {
 
       const sprite = await sharp({
         create: {
-          width: COLS * CELL,
-          height: Math.max(1, rows) * CELL,
+          width: COLS * cell,
+          height: Math.max(1, rows) * cell,
           channels: 3,
           background: { r: 9, g: 9, b: 11 },
         },
@@ -179,7 +197,7 @@ export async function GET(req: NextRequest) {
 
       return { b64: sprite.toString("base64"), deadHex: deadMaskToHex(dead) };
     },
-    ["avatar-sprite-v2", name.toLowerCase(), String(from), String(count), sig],
+    ["avatar-sprite-v2", name.toLowerCase(), String(from), String(count), sig, String(cell)],
     { revalidate: 900 },
   )();
 
@@ -191,7 +209,7 @@ export async function GET(req: NextRequest) {
       "Cache-Control": "public, s-maxage=900, max-age=900",
       "X-Sprite-Sig": sig,
       "X-Sprite-Dead": composed.deadHex,
-      "X-Sprite-Cell": String(CELL),
+      "X-Sprite-Cell": String(cell),
       "X-Sprite-Cols": String(COLS),
       "X-Sprite-Count": String(slice.length),
       "X-Sprite-From": String(from),

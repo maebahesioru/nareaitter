@@ -39,6 +39,9 @@ export type Messages = {
   saveFailed: string;
   saveFailedWith: string;
   saveDisabled: string;
+  saveLongPressHint: string;
+  saveLongPressClose: string;
+  postSpamTip: string;
   themeLight: string;
   themeDark: string;
   donationTitle: string;
@@ -107,7 +110,7 @@ export const messages: Record<Locale, Messages> = {
     countsUnit: "件",
     tableTitle: "の馴れ合い表",
     tableHint:
-      "中心に近いほど、過去30日の公開データ上でメンションのやりとりが多い相手です。",
+      "中心に近いほど、過去30日の公開データ上でメンションのやりとりが多い相手です。いいねやフォローは集計に含まれません。",
     footerLegal:
       "収集・集計は過去30日分の公開データに限ります。表示は公開の情報をもとにした目安です。結果が欠けたりずれる場合があります。本サービスからあなたの X にログインしたり、勝手に投稿したりすることはありません。",
     footerBy: "制作者:",
@@ -133,6 +136,11 @@ export const messages: Record<Locale, Messages> = {
     saveFailedWith: "保存に失敗しました（{msg}）",
     saveDisabled:
       "先にユーザー名を入力して「サークルを表示」を押してください",
+    saveLongPressHint:
+      "画像を長押しして「写真に追加」を選ぶと保存できます",
+    saveLongPressClose: "閉じる",
+    postSpamTip:
+      "※結果を投稿するとき、文面によっては X のスパム判定を受ける場合があります。一言変えると引っかかりにくくなるようです。",
     themeLight: "ライトモードに切り替え",
     themeDark: "ダークモードに切り替え",
     donationTitle: "寄付のお願い",
@@ -203,7 +211,7 @@ export const messages: Record<Locale, Messages> = {
     countsUnit: "",
     tableTitle: " mutual circle",
     tableHint:
-      "Closer to the center means more @-mention activity with that account in the last 30 days (public data).",
+      "Closer to the center means more @-mention activity with that account in the last 30 days (public data). Likes and follows are not counted.",
     footerLegal:
       "Aggregation covers public data from the last 30 days only. Display is indicative and may be incomplete. This service does not log into your X account or post on your behalf.",
     footerBy: "Author:",
@@ -228,6 +236,11 @@ export const messages: Record<Locale, Messages> = {
     saveFailed: "Could not save.",
     saveFailedWith: "Could not save ({msg})",
     saveDisabled: "Enter a username and tap “Show circle” first",
+    saveLongPressHint:
+      "Long-press the image and choose “Add to Photos” / “Save Image” to keep it",
+    saveLongPressClose: "Close",
+    postSpamTip:
+      "Note: X may flag some result posts as spam. Changing the wording slightly helps avoid it.",
     themeLight: "Switch to light mode",
     themeDark: "Switch to dark mode",
     donationTitle: "Support this project",
