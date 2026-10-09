@@ -22,6 +22,12 @@ export type Messages = {
   footerBy: string;
   footerSister: string;
   footerSisterName: string;
+  footerPrivacy: string;
+  consentTitle: string;
+  consentBody: string;
+  consentAccept: string;
+  consentEssential: string;
+  consentMore: string;
   emptyPrompt: string;
   noPeers: string;
   ariaCircle: string;
@@ -125,6 +131,13 @@ export const messages: Record<Locale, Messages> = {
     footerBy: "制作者:",
     footerSister: "姉妹サイト:",
     footerSisterName: "ツイッタラー世論調査",
+    footerPrivacy: "プライバシーポリシー",
+    consentTitle: "Cookies の使用について",
+    consentBody:
+      "このサイトは表示設定の保存や荒らし対策に Cookie / localStorage を使用します。加えて、広告配信のために Google AdSense を利用しており、Google とそのパートナーが Cookie を使用して、興味関心に応じた広告を配信します。「必須のみ」を選んだ場合、広告用の Cookie は使用されません。",
+    consentAccept: "同意する",
+    consentEssential: "必須のみ",
+    consentMore: "プライバシーポリシーを見る",
     emptyPrompt:
       "上のフォームで X のユーザー名を入力し、「サークルを表示」でここに表示されます。",
     noPeers:
@@ -239,6 +252,13 @@ export const messages: Record<Locale, Messages> = {
     footerBy: "Author:",
     footerSister: "Sister site:",
     footerSisterName: "Tsuittara Yoron Chosa",
+    footerPrivacy: "Privacy Policy",
+    consentTitle: "About Cookies",
+    consentBody:
+      "This site uses cookies / localStorage to remember your display settings and for anti-spam. It also serves ads through Google AdSense: Google and its partners use cookies to deliver ads based on your interests. If you choose “Essential only”, no advertising cookies are used.",
+    consentAccept: "Accept",
+    consentEssential: "Essential only",
+    consentMore: "Read the privacy policy",
     emptyPrompt:
       "Enter an X username above and tap “Show circle” to display it here.",
     noPeers:

@@ -1,6 +1,7 @@
 ﻿import type { Metadata } from "next";
 import { Geist_Mono, Noto_Sans_JP } from "next/font/google";
 import { headers } from "next/headers";
+import { CookieConsent } from "@/components/CookieConsent";
 import { DonationPopup } from "@/components/DonationPopup";
 import { HtmlLang } from "@/components/HtmlLang";
 import { LocaleProvider } from "@/components/LocaleProvider";
@@ -135,6 +136,14 @@ export default function RootLayout({
       className={`${notoSansJp.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col font-sans">
+        {/** Google Consent Mode v2: 広告 Cookie は既定で拒否。同意バナーで「同意する」が選ばれたときだけ許可する。
+            AdSense スクリプトより先に実行される必要がある。 */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('consent','default',{ad_storage:'denied',ad_user_data:'denied',ad_personalization:'denied',analytics_storage:'denied'});",
+          }}
+        />
         {/** next/script の data-nscript は AdSense が拒否するため、素の script で読み込む */}
         <script
           async
@@ -146,6 +155,7 @@ export default function RootLayout({
           <HtmlLang />
           <ThemeProvider>
             <DonationPopup />
+            <CookieConsent />
             {children}
           </ThemeProvider>
         </LocaleProvider>
