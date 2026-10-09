@@ -50,6 +50,12 @@ export function CookieConsent() {
     }
     applyConsent(v === "all");
     setOpen(false);
+    // 寄付ポップアップなど、同意後に表示したい UI へ通知する
+    try {
+      window.dispatchEvent(new Event("nareai-consent-decided"));
+    } catch {
+      /* ignore */
+    }
   };
 
   if (!open) return null;

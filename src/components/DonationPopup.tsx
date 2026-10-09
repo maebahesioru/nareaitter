@@ -7,6 +7,8 @@ const OFUSE_URL = "https://ofuse.me/maebahesioru";
 
 /** React Strict Mode の再マウントでも閉じたままにする + 再訪問時は出さない */
 const DISMISSED_KEY = "nareai-donation-dismissed-v1";
+/** Cookie 同意の保存キー(CookieConsent と共有) */
+const CONSENT_KEY = "nareai-consent-v1";
 
 export function DonationPopup() {
   const { t } = useLocale();
@@ -16,6 +18,13 @@ export function DonationPopup() {
     try {
       if (typeof window !== "undefined" && localStorage.getItem(DISMISSED_KEY) === "1") {
         return;
+      }
+      // Cookie 同意バナーが未回答の間は出さない(モーダルが二重に重なるのを防ぐ)。
+      // CookieConsent が選択時に "nareai-consent-decided" を発火するので、それを受けて表示する。
+      if (typeof window !== "undefined" && !localStorage.getItem(CONSENT_KEY)) {
+        const onDecided = () => setOpen(true);
+        window.addEventListener("nareai-consent-decided", onDecided);
+        return () => window.removeEventListener("nareai-consent-decided", onDecided);
       }
     } catch {
       /* プライベートモード等 */
