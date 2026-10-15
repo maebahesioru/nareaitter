@@ -208,6 +208,52 @@ function sanitizePromptTexts(list: string[] | undefined): string[] {
   return out;
 }
 
+/**
+ * プロンプトをチャットAIの「1メッセージ上限」に収まるよう行単位で分割する（2026-10-16）。
+ * ChatGPTは1メッセージの長さ制限があり「送信したメッセージが長すぎます」で弾かれるため、
+ * 順番に貼り付けて送信できるよう分割する。**内容は一切失わない**（分割マーカーのみ付与）。
+ */
+export function splitPromptForChat(
+  prompt: string,
+  locale: "ja" | "en",
+  maxChars = 15000,
+): string[] {
+  if (prompt.length <= maxChars) return [prompt];
+  const lines = prompt.split("\n");
+  const rawParts: string[] = [];
+  let cur: string[] = [];
+  let len = 0;
+  for (const line of lines) {
+    const add = line.length + 1;
+    if (cur.length > 0 && len + add > maxChars) {
+      rawParts.push(cur.join("\n"));
+      cur = [];
+      len = 0;
+    }
+    cur.push(line);
+    len += add;
+  }
+  if (cur.length) rawParts.push(cur.join("\n"));
+  const n = rawParts.length;
+  return rawParts.map((p, i) => {
+    const top =
+      i === 0
+        ? locale === "ja"
+          ? `（全${n}通に分割。順番に貼り付けて送信してください）`
+          : `(Split into ${n} messages. Send them in order.)`
+        : locale === "ja"
+          ? `（続き ${i + 1}/${n}）`
+          : `(Continuation ${i + 1}/${n})`;
+    const bottom =
+      i < n - 1
+        ? locale === "ja"
+          ? `（続きは次のメッセージで ${i + 2}/${n} を貼り付けて送信）`
+          : `(Next: paste part ${i + 2}/${n} in the next message)`
+        : "";
+    return [top, p, bottom].filter(Boolean).join("\n");
+  });
+}
+
 function buildSelfSection(
   self: SelfInfo,
   selfTweets: string[] | undefined,
@@ -323,7 +369,7 @@ function buildSelfSection(
     }
   }
   const cleanTweets = sanitizePromptTexts(selfTweets);
-  const tweetList = cleanTweets.map((t) => `- 「${t}」`).join("\n");
+  const tweetList = cleanTweets.join("\n");
   const cleanBio = self.profileDescription ? sanitizePromptText(self.profileDescription) : null;
   const bioLine = cleanBio ? `\nプロフィール文: 「${cleanBio}」` : "";
   const profileHead =
@@ -404,34 +450,34 @@ function userLine(u: CircleUser, idx: number, isJa: boolean, selfTopHour?: numbe
     if (diff <= 2) facts.push(isJa ? "生活リズム: 似てる" : "rhythm: similar");
     else if (diff >= 6) facts.push(isJa ? "生活リズム: 真逆" : "rhythm: opposite");
   }
-  if (facts.length) lines.push(`      ${facts.join("・")}`);
+  if (facts.length) lines.push(`  ${facts.join("・")}`);
   const q1 = u.latestFromThem ? sanitizePromptText(u.latestFromThem) : null;
-  if (q1) lines.push(`      相手の最近の投稿: 「${q1}」`);
+  if (q1) lines.push(`  相手最新「${q1}」`);
   const q2 = u.latestFromThem2 ? sanitizePromptText(u.latestFromThem2) : null;
-  if (q2) lines.push(`      相手の1つ前の投稿: 「${q2}」`);
+  if (q2) lines.push(`  相手前回「${q2}」`);
   const q3 = u.latestToThem ? sanitizePromptText(u.latestToThem) : null;
-  if (q3) lines.push(`      自分→相手の最近の投稿: 「${q3}」`);
+  if (q3) lines.push(`  自分最新「${q3}」`);
   const q4 = u.latestToThem2 ? sanitizePromptText(u.latestToThem2) : null;
-  if (q4) lines.push(`      自分→相手の1つ前の投稿: 「${q4}」`);
+  if (q4) lines.push(`  自分前回「${q4}」`);
   {
     const fm: string[] = [];
     const f1 = u.firstFromThem ? sanitizePromptText(u.firstFromThem) : null;
     if (f1) fm.push(`相手「${f1}」`);
     const f2 = u.firstToThem ? sanitizePromptText(u.firstToThem) : null;
     if (f2) fm.push(`自分「${f2}」`);
-    if (fm.length) lines.push(`      初対面のやり取り: ${fm.join(" → ")}`);
+    if (fm.length) lines.push(`  初対面: ${fm.join("→")}`);
   }
   if (u.exchange?.length) {
     const rows = u.exchange
       .map((x) => {
         const c = sanitizePromptText(x.text);
         return c
-          ? `        ${fmtTs(x.t)} ${x.dir === "from" ? "相手→自分" : "自分→相手"}: 「${c}」`
+          ? `  ${fmtTs(x.t)} ${x.dir === "from" ? "相手→自分" : "自分→相手"}「${c}」`
           : null;
       })
       .filter((r): r is string => Boolean(r));
     if (rows.length) {
-      lines.push(`      【最近のやり取り（新しい順）】`);
+      lines.push(`  【最近のやり取り（新しい順）】`);
       for (const r of rows) lines.push(r);
     }
   }
@@ -521,8 +567,8 @@ function buildNarikiriPrompt(
   const extrasSection = parts.length ? "\n\n" + parts.join("\n\n") : "";
 
   const legend = isJa
-    ? "\n\n【データの見方】投稿は実際の文面そのまま。交流期間=この30日データ内。週次=4週前→今週。返信速度=中央値。"
-    : "\n\n【How to read】Posts are verbatim. Span=within this 30d window. Weekly=4w ago -> now. Reply speed=median.";
+    ? "\n\n【データの見方】投稿は実際の文面そのまま（1行=1投稿）。交流期間=この30日データ内。週次=4週前→今週。返信速度=中央値。"
+    : "\n\n【How to read】Posts are verbatim (one line = one post). Span=within this 30d window. Weekly=4w ago -> now. Reply speed=median.";
 
   const rules = isJa
     ? "【ルール】\n・文体・口調・絵文字・笑い方は投稿群を忠実に真似る（語尾・ｗ/笑/草・一人称・相手の呼び方を揃える）\n・データに無い具体的な事実（場所・人間関係・出来事）を断定して創作しない\n・「AIです」「データによると」は禁止。統計や数字を会話に持ち出さない\n・1回の返答は投稿1件分くらいの長さ（2〜4文程度）で"

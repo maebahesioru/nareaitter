@@ -6,6 +6,7 @@ import type { CircleUser, SelfProfile } from "@/types/circle";
 import {
   DIAGNOSIS_DEFS,
   generatePrompt,
+  splitPromptForChat,
   type DiagnosisType,
   type OutputMode,
 } from "@/lib/ai-prompts";
@@ -70,6 +71,7 @@ export function AIDiagnosisPanel({ self, users, selfTweets, selfActivity, extras
   const [selected, setSelected] = useState<DiagnosisType | null>(null);
   const [partner, setPartner] = useState("");
   const [copied, setCopied] = useState(false);
+  const [copiedPart, setCopiedPart] = useState<number | null>(null);
   const [outputMode, setOutputMode] = useState<OutputMode>("text");
 
   const prompt = useMemo(() => {
@@ -87,6 +89,12 @@ export function AIDiagnosisPanel({ self, users, selfTweets, selfActivity, extras
     );
   }, [selected, self, users, partner, locale, selfTweets, selfActivity, extras, outputMode]);
 
+  /** チャットAIの1メッセージ上限に収まるよう行単位で分割（小さいプロンプトは1要素のまま・内容は不変） */
+  const parts = useMemo(
+    () => (prompt ? splitPromptForChat(prompt, locale as "ja" | "en") : []),
+    [prompt, locale],
+  );
+
   const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(prompt);
@@ -96,6 +104,30 @@ export function AIDiagnosisPanel({ self, users, selfTweets, selfActivity, extras
       // fallback
     }
   }, [prompt]);
+
+  const handleCopyPart = useCallback(async (index: number, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedPart(index);
+      setTimeout(() => setCopiedPart(null), 2000);
+    } catch {
+      // fallback
+    }
+  }, []);
+
+  const handleSaveTxt = useCallback(() => {
+    try {
+      const blob = new Blob([prompt], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `nareaitter-prompt-${self.screenName || "account"}.txt`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      // ignore
+    }
+  }, [prompt, self.screenName]);
 
   const def = DIAGNOSIS_DEFS.find((d) => d.id === selected);
 
@@ -214,6 +246,37 @@ export function AIDiagnosisPanel({ self, users, selfTweets, selfActivity, extras
               </a>
             ))}
           </div>
+
+          {parts.length > 1 && (
+            <div className="flex flex-col gap-2 rounded-xl border border-amber-300/60 bg-amber-50/50 p-3 dark:border-amber-500/30 dark:bg-amber-950/20">
+              <p className="text-xs leading-relaxed text-amber-800 dark:text-amber-200">
+                {locale === "ja"
+                  ? `ChatGPT等は1メッセージに長さ制限があります（このプロンプトは約${prompt.length.toLocaleString()}字）。下の分割コピーを順番に貼り付けて送信してください`
+                  : `ChatGPT etc. limit the length of one message (~${prompt.length.toLocaleString()} chars). Paste these parts in order.`}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {parts.map((part, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => void handleCopyPart(i, part)}
+                    className="rounded-lg border border-amber-500/50 bg-white/80 px-3 py-1.5 text-xs font-semibold text-amber-900 transition hover:bg-amber-100/70 dark:border-amber-400/40 dark:bg-zinc-900/60 dark:text-amber-100 dark:hover:bg-amber-950/40"
+                  >
+                    {copiedPart === i
+                      ? (locale === "ja" ? "✓ コピーしました" : "✓ Copied")
+                      : (locale === "ja" ? `${i + 1}/${parts.length} をコピー` : `Copy ${i + 1}/${parts.length}`)}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={handleSaveTxt}
+                  className="rounded-lg border border-zinc-300/90 bg-white/90 px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:border-sky-400/60 dark:border-white/15 dark:bg-zinc-800/80 dark:text-zinc-300"
+                >
+                  {locale === "ja" ? ".txtで保存（ファイル添付用）" : "Save .txt (for file attach)"}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
