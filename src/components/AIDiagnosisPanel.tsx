@@ -191,8 +191,8 @@ export function AIDiagnosisPanel({ self, users, selfTweets, selfActivity, extras
       {selected === "narikiri" && (
         <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
           {locale === "ja"
-            ? "→ 全ツイートを丸ごと使う。コピーしてAIアプリ（ChatGPT・Grok・Claude等）に貼ると、準備メモ→本人の第一声まで自動でやってくれる。あとは普通に話しかけるだけ"
-            : "→ Uses ALL posts. Paste into an AI app (ChatGPT, Grok, Claude, ...): it warms up and opens the conversation as this person. Then just chat."}
+            ? "→ 全ツイートを丸ごと使う。コピーしてAIアプリ（ChatGPT・Grok・Claude等）に貼ると、本人の第一声から始まる（準備メモなし）。あとは普通に話しかけるだけ"
+            : "→ Uses ALL posts. Paste into an AI app (ChatGPT, Grok, Claude, ...): it opens the conversation as this person right away. Then just chat."}
         </p>
       )}
 

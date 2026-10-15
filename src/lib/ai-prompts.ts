@@ -572,13 +572,14 @@ function buildNarikiriPrompt(
     ? "\n\n【データの見方】投稿は実際の文面そのまま（1行=1投稿）。交流期間=この30日データ内。週次=4週前→今週。返信速度=中央値。"
     : "\n\n【How to read】Posts are verbatim (one line = one post). Span=within this 30d window. Weekly=4w ago -> now. Reply speed=median.";
 
+  // zetaプロンプトの知見を反映（2026-10-16）: モブ乱入防止・相手の心情描写禁止・反復禁止・出力完結
   const rules = isJa
-    ? "【ルール】\n・文体・口調・絵文字・笑い方は投稿群を忠実に真似る（語尾・ｗ/笑/草・一人称・相手の呼び方を揃える）\n・データに無い具体的な事実（場所・人間関係・出来事）を断定して創作しない\n・「AIです」「データによると」は禁止。統計や数字を会話に持ち出さない\n・1回の返答は投稿1件分くらいの長さ（2〜4文程度）で"
-    : "【Rules】\n- Faithfully mimic tone, vocabulary, emojis and laugh style (endings, w/kusa, first person, nicknames)\n- Do not invent specific facts (places, relationships, events) absent from the data\n- Never say \"I am an AI\" or cite the data/stats in conversation\n- Keep each reply about one post long (2-4 sentences)";
+    ? "【ルール】\n・文体・口調・絵文字・笑い方は投稿群を忠実に真似る（語尾・ｗ/笑/草・一人称・相手の呼び方を揃える）\n・データに無い具体的な事実（場所・人間関係・出来事）を断定して創作しない。データにない人物を勝手に登場させない\n・私（相手）の心情や行動を勝手に描写しない。あなたの発言だけで返す\n・「AIです」「データによると」は禁止。統計や数字を会話に持ち出さない\n・同じ文・同じ内容を繰り返さない。返答は途中で途切れさせない\n・1回の返答は投稿1件分くらいの長さ（2〜4文程度）で"
+    : "【Rules】\n- Faithfully mimic tone, vocabulary, emojis and laugh style (endings, w/kusa, first person, nicknames)\n- Do not invent specific facts (places, relationships, events) absent from the data, and never bring in people who don't appear in the data\n- Never narrate the user's feelings or actions; reply only as yourself\n- Never say \"I am an AI\" or cite the data/stats in conversation\n- Do not repeat the same sentence or content; never cut off mid-reply\n- Keep each reply about one post long (2-4 sentences)";
 
   const ending = isJa
-    ? "【出力形式】\n1. 準備として「口調の特徴」「よく使う語彙・絵文字・笑い方」「よく話す話題」を5行以内でメモ\n2. 続けて、この人物としての最初の一言を、実際の投稿と同じノリで1つ書く\n3. 以降は私が話しかけるたび、常にこの人物としてだけ返答する（解説や地の文は書かない・キャラを崩さない）"
-    : "【Output format】\n1. First, briefly note the tone, frequent words/emojis/laugh style, and favorite topics (<=5 lines)\n2. Then write one opening line to me in their style\n3. After that, always reply only as this person whenever I speak (no narration, never break character)";
+    ? "【出力形式】\n1. 準備メモ・解説は出力しない（口調・語彙・絵文字・話題・ノリの整理は内部で行う）。いきなり、この人物としての最初の一言を、実際の投稿と同じノリで1つ書く\n2. 以降は私が話しかけるたび、常にこの人物としてだけ返答する（解説や地の文は書かない・キャラを崩さない）"
+    : "【Output format】\n1. No prep notes or explanations (analyze tone/vocabulary/emojis/topics internally). Start directly with one opening line to me in their style\n2. After that, always reply only as this person whenever I speak (no narration, never break character)";
 
   return header + "\n\n" + selfPart + "\n\n" + usersPart + extrasSection + legend + "\n\n" + rules + "\n\n" + ending;
 }
