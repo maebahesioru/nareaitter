@@ -20,6 +20,7 @@ async function loadImage(originalUrl: string): Promise<HTMLImageElement> {
     try {
       return await new Promise<HTMLImageElement>((resolve, reject) => {
         const img = new Image();
+        img.decoding = "async";
         if (/^https?:\/\//.test(src)) {
           img.crossOrigin = "anonymous";
           try {
@@ -28,8 +29,19 @@ async function loadImage(originalUrl: string): Promise<HTMLImageElement> {
             /* ignore */
           }
         }
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error("load"));
+        // ハングしたリクエストが並列ロードの枠を永久に占有しないようにする
+        const timer = window.setTimeout(() => {
+          img.src = "";
+          reject(new Error("timeout"));
+        }, 20000);
+        img.onload = () => {
+          window.clearTimeout(timer);
+          resolve(img);
+        };
+        img.onerror = () => {
+          window.clearTimeout(timer);
+          reject(new Error("load"));
+        };
         img.src = src;
       });
     } catch (e) {
@@ -50,6 +62,28 @@ function drawCropCircle(ctx: CanvasRenderingContext2D, img: HTMLImageElement, cx
   ctx.clip();
   ctx.drawImage(img, cx - (iw * s) / 2, cy - (ih * s) / 2, iw * s, ih * s);
   ctx.restore();
+}
+
+// ── 画像ロードの共有キャッシュ ─────────────────────────────
+// URL→結果をモジュール寿命で保持し、除外→再構築パスやタブ再訪でも同じURLを再取得しない。
+// 失敗も null として記憶する（同一URLへの無限リトライ防止）。上限512でFIFO破棄。
+const TREE_IMG_CACHE_MAX = 512;
+const treeImgCache = new Map<string, Promise<HTMLImageElement | null>>();
+
+function loadTreeImage(url: string): Promise<HTMLImageElement | null> {
+  const key = url.trim();
+  const hit = treeImgCache.get(key);
+  if (hit) return hit;
+  const job = loadImage(key).then(
+    (img) => img,
+    () => null,
+  );
+  if (treeImgCache.size >= TREE_IMG_CACHE_MAX) {
+    const oldest = treeImgCache.keys().next().value;
+    if (oldest !== undefined) treeImgCache.delete(oldest);
+  }
+  treeImgCache.set(key, job);
+  return job;
 }
 
 // ── 家系図レイアウト ─────────────────────────────────────────────
@@ -558,98 +592,123 @@ export function FamilyTreeCanvas({ self, users }: Props) {
       ctx.lineWidth = 1.4;
       ctx.globalAlpha = 1;
 
-      // ノード
-      const imgCache = new Map<string, HTMLImageElement | null>();
+      // ノード: 先に丸枠＋名前のスケルトンを全描画し、アイコンは並列ロードで届いた順に載せる
+      // （逐次ロードだと1人あたり最大14秒のフォールバックが直列に積み上がるのが「バカ遅い」の実因）
+      const POOL = 10;
+      let active = 0;
+      const waiters: Array<() => void> = [];
+      const gate = async <T,>(fn: () => Promise<T>): Promise<T> => {
+        while (active >= POOL) await new Promise<void>((resolve) => waiters.push(resolve));
+        active += 1;
+        try {
+          return await fn();
+        } finally {
+          active -= 1;
+          waiters.shift()?.();
+        }
+      };
+
       // 複数ソースを順に試す: プレビュー → HD → サーバー側フォールバック解決
+      // （URL単位の結果はモジュール共有キャッシュ済み: 除外→再構築パスやタブ再訪で再取得しない）
       const load = async (urls: Array<string | undefined>) => {
         for (const raw of urls) {
           const key = raw?.trim();
           if (!key) continue;
-          if (imgCache.has(key)) {
-            const hit = imgCache.get(key);
-            if (hit) return hit;
-            continue;
-          }
-          try {
-            const i = await loadImage(key);
-            imgCache.set(key, i);
-            return i;
-          } catch {
-            imgCache.set(key, null);
-          }
+          const img = await loadTreeImage(key);
+          if (img) return img;
         }
         return null;
       };
 
-      const nodeResults: [string, "ok" | "fail"][] = [];
-      for (const row of layout.rows) {
-        let ni = 0;
-        for (const n of row.nodes) {
-          if (cancelled) return;
-          const stagger = n.isSelf ? 0 : ni % 2;
-          ni += 1;
-          const fallbackUrl = `/api/avatar-fallback?screen=${encodeURIComponent(n.isSelf ? self.screenName : n.node.user.screenName)}`;
-          const img = n.isSelf
-            ? await load([self.avatarUrlPreview, self.avatarUrl, fallbackUrl])
-            : await load([n.node.user.avatarUrlPreview, n.node.user.avatarUrl, fallbackUrl]);
-          nodeResults.push([n.isSelf ? "(self)" : n.node.user.screenName, img ? "ok" : "fail"]);
-          if (img) drawCropCircle(ctx, img, n.x, n.y, n.r);
-          else {
-            // 画像が存在しないアカウント: 自動除外のため記録（最終手段で頭文字ディスク）
-            if (!n.isSelf) failedRef.current.add(n.node.user.screenName);
-            // 「デフォルトアバター」風の色付きディスク + 頭文字
-            const pal = isDark
-              ? ["#45516e", "#5d4a6e", "#496e52", "#6e5d45", "#6e4a55", "#4a6470"]
-              : ["#c7d2e8", "#dbc9e8", "#c9e8d1", "#e8dbc9", "#e8c9d1", "#c9e0e8"];
-            const key = n.isSelf ? self.screenName : n.node.user.screenName || "x";
-            let hsh = 0;
-            for (let ci = 0; ci < key.length; ci++) hsh = (hsh * 31 + key.charCodeAt(ci)) >>> 0;
-            ctx.fillStyle = pal[hsh % pal.length];
-            ctx.beginPath();
-            ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
-            ctx.fill();
-            const nm = (n.isSelf ? self.screenName : n.node.user.displayName || n.node.user.screenName || "?").trim();
-            const initial = ([...nm][0] ?? "?").toUpperCase();
-            ctx.font = `bold ${Math.max(12, Math.round(n.r * 0.8))}px sans-serif`;
-            ctx.fillStyle = isDark ? "rgba(244,244,245,0.92)" : "rgba(39,39,42,0.85)";
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.fillText(initial, n.x, n.y + n.r * 0.04);
-            ctx.textAlign = "start";
-            ctx.textBaseline = "alphabetic";
-          }
-          ctx.strokeStyle = n.isSelf ? rootRing : bc;
-          ctx.lineWidth = n.isSelf ? 3 : 2;
-          ctx.beginPath();
-          ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
-          ctx.stroke();
+      const drawRing = (n: TNode) => {
+        ctx.strokeStyle = n.isSelf ? rootRing : bc;
+        ctx.lineWidth = n.isSelf ? 3 : 2;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+        ctx.stroke();
+      };
 
-          const label = n.isSelf
-            ? `@${self.screenName}`
-            : (n.node.user.displayName || n.node.user.screenName || "");
-          if (label) {
-            const fs = n.isSelf ? Math.max(11, Math.min(14, W * 0.024)) : nameFs;
-            ctx.font = `${n.isSelf ? "bold " : ""}${fs}px sans-serif`;
-            ctx.fillStyle = n.isSelf ? txt : sub;
-            const dropsDown = dropSources.has(`${Math.round(n.x)}@${Math.round(n.y + n.r)}`);
-            let text = label;
-            if (dropsDown) {
-              // 降下線と重ならないよう、名前は線の右側へ
-              const maxW = n.r * 1.95;
-              while (text.length > 3 && ctx.measureText(text).width > maxW) text = `${text.slice(0, -2)}…`;
-              ctx.textAlign = "start";
-              ctx.fillText(text, n.x + 6, n.y + n.r + fs + 3 + stagger * (fs + 3));
-            } else {
-              // 夫婦メンバーは中点の降下線に届かない幅に制限
-              const maxW = n.inCouple ? n.r * 1.85 : n.r * 2.7;
-              while (text.length > 4 && ctx.measureText(text).width > maxW) text = `${text.slice(0, -2)}…`;
-              ctx.textAlign = "center";
-              ctx.fillText(text, n.x, n.y + n.r + fs + 3 + stagger * (fs + 3));
-              ctx.textAlign = "start";
-            }
+      const drawLabel = (n: TNode, stagger: number) => {
+        const label = n.isSelf
+          ? `@${self.screenName}`
+          : (n.node.user.displayName || n.node.user.screenName || "");
+        if (!label) return;
+        const fs = n.isSelf ? Math.max(11, Math.min(14, W * 0.024)) : nameFs;
+        ctx.font = `${n.isSelf ? "bold " : ""}${fs}px sans-serif`;
+        ctx.fillStyle = n.isSelf ? txt : sub;
+        const dropsDown = dropSources.has(`${Math.round(n.x)}@${Math.round(n.y + n.r)}`);
+        let text = label;
+        if (dropsDown) {
+          // 降下線と重ならないよう、名前は線の右側へ
+          const maxW = n.r * 1.95;
+          while (text.length > 3 && ctx.measureText(text).width > maxW) text = `${text.slice(0, -2)}…`;
+          ctx.textAlign = "start";
+          ctx.fillText(text, n.x + 6, n.y + n.r + fs + 3 + stagger * (fs + 3));
+        } else {
+          // 夫婦メンバーは中点の降下線に届かない幅に制限
+          const maxW = n.inCouple ? n.r * 1.85 : n.r * 2.7;
+          while (text.length > 4 && ctx.measureText(text).width > maxW) text = `${text.slice(0, -2)}…`;
+          ctx.textAlign = "center";
+          ctx.fillText(text, n.x, n.y + n.r + fs + 3 + stagger * (fs + 3));
+          ctx.textAlign = "start";
+        }
+      };
+
+      const nodeResults: [string, "ok" | "fail"][] = [];
+      const jobs: Promise<void>[] = [];
+      {
+        let ni = 0;
+        for (const row of layout.rows) {
+          for (const n of row.nodes) {
+            if (cancelled) return;
+            const stagger = n.isSelf ? 0 : ni % 2;
+            ni += 1;
+            // スケルトン先行描画（アイコン到着を待たずに構造を即表示）
+            drawRing(n);
+            drawLabel(n, stagger);
+            const screen = n.isSelf ? "(self)" : n.node.user.screenName;
+            const fallbackUrl = `/api/avatar-fallback?screen=${encodeURIComponent(n.isSelf ? self.screenName : n.node.user.screenName)}`;
+            const urls = n.isSelf
+              ? [self.avatarUrlPreview, self.avatarUrl, fallbackUrl]
+              : [n.node.user.avatarUrlPreview, n.node.user.avatarUrl, fallbackUrl];
+            jobs.push(
+              gate(async () => {
+                const img = await load(urls);
+                if (cancelled) return;
+                nodeResults.push([screen, img ? "ok" : "fail"]);
+                if (img) drawCropCircle(ctx, img, n.x, n.y, n.r);
+                else {
+                  // 画像が存在しないアカウント: 自動除外のため記録（最終手段で頭文字ディスク）
+                  if (!n.isSelf) failedRef.current.add(n.node.user.screenName);
+                  // 「デフォルトアバター」風の色付きディスク + 頭文字
+                  const pal = isDark
+                    ? ["#45516e", "#5d4a6e", "#496e52", "#6e5d45", "#6e4a55", "#4a6470"]
+                    : ["#c7d2e8", "#dbc9e8", "#c9e8d1", "#e8dbc9", "#e8c9d1", "#c9e0e8"];
+                  const key = n.isSelf ? self.screenName : n.node.user.screenName || "x";
+                  let hsh = 0;
+                  for (let ci = 0; ci < key.length; ci++) hsh = (hsh * 31 + key.charCodeAt(ci)) >>> 0;
+                  ctx.fillStyle = pal[hsh % pal.length];
+                  ctx.beginPath();
+                  ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+                  ctx.fill();
+                  const nm = (n.isSelf ? self.screenName : n.node.user.displayName || n.node.user.screenName || "?").trim();
+                  const initial = ([...nm][0] ?? "?").toUpperCase();
+                  ctx.font = `bold ${Math.max(12, Math.round(n.r * 0.8))}px sans-serif`;
+                  ctx.fillStyle = isDark ? "rgba(244,244,245,0.92)" : "rgba(39,39,42,0.85)";
+                  ctx.textAlign = "center";
+                  ctx.textBaseline = "middle";
+                  ctx.fillText(initial, n.x, n.y + n.r * 0.04);
+                  ctx.textAlign = "start";
+                  ctx.textBaseline = "alphabetic";
+                }
+                drawRing(n);
+              }),
+            );
           }
         }
       }
+      await Promise.all(jobs);
+      if (cancelled) return;
 
       ctx.restore();
 
