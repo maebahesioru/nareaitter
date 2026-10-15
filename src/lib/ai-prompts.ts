@@ -1,6 +1,7 @@
 import type { CircleUser } from "@/types/circle";
 
 export type DiagnosisType =
+  | "narikiri"
   | "death"
   | "retire"
   | "compatibility"
@@ -16,6 +17,16 @@ type PromptDef = {
 };
 
 export const DIAGNOSIS_DEFS: PromptDef[] = [
+  {
+    id: "narikiri",
+    title: { ja: "なりきりチャット", en: "Roleplay Chat" },
+    desc: { ja: "全ツイート＋文脈データから「なりきりプロンプト」を生成。コピーしてAIアプリに貼ると、この人として会話できる", en: "Generate a roleplay prompt from ALL posts + context data. Paste into an AI app and chat as this person" },
+    hints: {
+      ja: "口調・語彙・絵文字・笑い方・呼称・話題・交流相手をデータから忠実に再現するのが目的。プロフィール・活動統計・交流相手・文体プロファイルの全カラムを根拠に使うこと。",
+      en: "Goal: faithfully reproduce tone, vocabulary, emojis, laugh style, nicknames, topics, and partners from the data.",
+    },
+    needsPartner: false,
+  },
   {
     id: "death",
     title: { ja: "死亡時期・死因推測", en: "Death Prediction" },
@@ -176,6 +187,7 @@ function buildSelfSection(
   selfTweets: string[] | undefined,
   selfActivity: SelfActivity | undefined,
   isJa: boolean,
+  framing: "self" | "target" = "self",
 ): string {
   const stats = [
     `@${self.screenName}`,
@@ -283,12 +295,28 @@ function buildSelfSection(
   }
   const tweetList = (selfTweets ?? []).map((t) => `- 「${t}」`).join("\n");
   const bioLine = self.profileDescription ? `\nプロフィール文: 「${self.profileDescription}」` : "";
+  const profileHead =
+    framing === "target"
+      ? isJa
+        ? "【プロフィール・活動統計】"
+        : "【Profile & activity stats】"
+      : isJa
+        ? "【自分のプロフィール】"
+        : "【My Profile】";
+  const tweetsHead =
+    framing === "target"
+      ? isJa
+        ? `【投稿の全件（新しい順・${selfTweets?.length ?? 0}件）】`
+        : `【All posts (newest first, ${selfTweets?.length ?? 0})】`
+      : isJa
+        ? "【自分の最近の投稿（新しい順・メンションの有無は混在）】"
+        : "【My recent posts (newest first; with/without mentions)】";
   return (
-    (isJa ? "【自分のプロフィール】" : "【My Profile】") +
+    profileHead +
     `\n${stats}${bioLine}` +
     (activityLines.length ? `\n${activityLines.join("\n")}` : "") +
     `\n\n` +
-    (isJa ? "【自分の最近の投稿（新しい順・メンションの有無は混在）】" : "【My recent posts (newest first; with/without mentions)】") +
+    tweetsHead +
     `\n${tweetList || (isJa ? "（データなし）" : "(no data)")}`
   );
 }
@@ -369,6 +397,92 @@ function buildUserDataSection(users: CircleUser[], isJa: boolean, selfTopHour?: 
   return users.slice(0, 25).map((u, i) => userLine(u, i, isJa, selfTopHour, selfLaugh)).join("\n");
 }
 
+function buildNarikiriPrompt(
+  locale: "ja" | "en",
+  self: SelfInfo,
+  users: CircleUser[],
+  selfTweets: string[] | undefined,
+  selfActivity: SelfActivity | undefined,
+  extras: PromptExtras | undefined,
+): string {
+  const isJa = locale === "ja";
+  const display =
+    self.displayName && self.displayName !== self.screenName
+      ? `「${self.displayName}」(@${self.screenName})`
+      : `@${self.screenName}`;
+
+  const header = isJa
+    ? `あなたはX（Twitter）ユーザー ${display} になりきってください。\n\n以下はこの人物の過去30日間の公開データ（投稿の全件・交流相手・活動統計・プロフィール）です。口調・語彙・絵文字・笑い方・呼称・ノリ・話題をこのデータから読み取り、本人として会話してください。`
+    : `Roleplay as the X (Twitter) user ${display}.\n\nBelow is this person's public data from the last 30 days (ALL posts, interaction partners, activity stats, profile). Read their tone, vocabulary, emojis, laugh style, nicknames, and topics from the data, and converse as them.`;
+
+  const selfPart = buildSelfSection(self, selfTweets, selfActivity, isJa, "target");
+
+  const usersPart =
+    (isJa ? "【交流相手（トップ25）】" : "【Interaction partners (top 25)】") +
+    "\n" +
+    buildUserDataSection(users, isJa, selfActivity?.topHours?.[0], extras?.selfStyle?.laugh);
+
+  const parts: string[] = [];
+  if (extras) {
+    if (extras.selfEmojis?.length) {
+      parts.push(isJa ? `【よく使う絵文字】\n${extras.selfEmojis.join(" ")}` : `【Frequent emojis】\n${extras.selfEmojis.join(" ")}`);
+    }
+    if (extras.selfVocatives?.length) {
+      parts.push(isJa ? `【界隈での呼ばれ方】\n${extras.selfVocatives.join("・")}` : `【Known as】\n${extras.selfVocatives.join(", ")}`);
+    }
+    if (extras.topSentTargets?.length) {
+      const rows = extras.topSentTargets
+        .map((t) => `- @${t.screenName}${t.displayName ? `（${t.displayName}）` : ""}: ${t.n}回`)
+        .join("\n");
+      parts.push(isJa ? `【よくメンションする相手】\n${rows}` : `【Most-mentioned people】\n${rows}`);
+    }
+    if (extras.communityWords?.length) {
+      parts.push(isJa ? `【界隈の頻出ワード】\n${extras.communityWords.join("・")}` : `【Community words】\n${extras.communityWords.join(", ")}`);
+    }
+    if (extras.recentMentionsToYou?.length) {
+      const rows = extras.recentMentionsToYou
+        .map((m) => `- ${fmtTs(m.at)} @${m.from}: 「${m.text}」`)
+        .join("\n");
+      parts.push(
+        isJa
+          ? `【最近届いたメンション（参考情報・他者の発言。本人のセリフとして使わない）】\n${rows}`
+          : `【Recent mentions received (context only - other people's words, never use as own lines)】\n${rows}`,
+      );
+    }
+    if (extras.recentNewConn?.length) {
+      const rows = extras.recentNewConn
+        .map((n) => `- @${n.screenName}${n.displayName ? `（${n.displayName}）` : ""}: ${n.daysAgo ?? "?"}日前に知り合った`)
+        .join("\n");
+      parts.push(isJa ? `【最近知り合った相手】\n${rows}` : `【Newest connections】\n${rows}`);
+    }
+    const st = extras.selfStyle;
+    if (st) {
+      const bits: string[] = [];
+      if (st.avgLen !== undefined) bits.push(isJa ? `平均${st.avgLen}字` : `avg ${st.avgLen} chars`);
+      if (st.keigoRate !== undefined) bits.push(isJa ? (st.keigoRate >= 40 ? "敬語多め" : st.keigoRate >= 15 ? "タメ口と敬語が混在" : "基本タメ口") : `keigo ${st.keigoRate}%`);
+      if (st.exclaimRate !== undefined) bits.push(isJa ? `！付き${st.exclaimRate}%` : `exclaims ${st.exclaimRate}%`);
+      if (st.laugh) bits.push(isJa ? `笑い方=${st.laugh}` : `laugh=${st.laugh}`);
+      if (st.streakDays !== undefined) bits.push(isJa ? (st.streakDays > 0 ? `${st.streakDays}日連続投稿中` : "最近は投稿が途切れ気味") : `${st.streakDays} day streak`);
+      parts.push(isJa ? `【文体・継続状況】\n${bits.join("・")}` : `【Writing style & streak】\n${bits.join(" · ")}`);
+    }
+  }
+  const extrasSection = parts.length ? "\n\n" + parts.join("\n\n") : "";
+
+  const legend = isJa
+    ? "\n\n【データの見方】投稿は実際の文面そのまま。交流期間=この30日データ内。週次=4週前→今週。返信速度=中央値。"
+    : "\n\n【How to read】Posts are verbatim. Span=within this 30d window. Weekly=4w ago -> now. Reply speed=median.";
+
+  const rules = isJa
+    ? "【ルール】\n・文体・口調・絵文字・笑い方は投稿群を忠実に真似る（語尾・ｗ/笑/草・一人称・相手の呼び方を揃える）\n・データに無い具体的な事実（場所・人間関係・出来事）を断定して創作しない\n・「AIです」「データによると」は禁止。統計や数字を会話に持ち出さない\n・1回の返答は投稿1件分くらいの長さ（2〜4文程度）で"
+    : "【Rules】\n- Faithfully mimic tone, vocabulary, emojis and laugh style (endings, w/kusa, first person, nicknames)\n- Do not invent specific facts (places, relationships, events) absent from the data\n- Never say \"I am an AI\" or cite the data/stats in conversation\n- Keep each reply about one post long (2-4 sentences)";
+
+  const ending = isJa
+    ? "【出力形式】\n1. 準備として「口調の特徴」「よく使う語彙・絵文字・笑い方」「よく話す話題」を5行以内でメモ\n2. 続けて、この人物としての最初の一言を、実際の投稿と同じノリで1つ書く\n3. 以降は私が話しかけるたび、常にこの人物としてだけ返答する（解説や地の文は書かない・キャラを崩さない）"
+    : "【Output format】\n1. First, briefly note the tone, frequent words/emojis/laugh style, and favorite topics (<=5 lines)\n2. Then write one opening line to me in their style\n3. After that, always reply only as this person whenever I speak (no narration, never break character)";
+
+  return header + "\n\n" + selfPart + "\n\n" + usersPart + extrasSection + legend + "\n\n" + rules + "\n\n" + ending;
+}
+
 export function generatePrompt(
   type: DiagnosisType,
   locale: "ja" | "en",
@@ -381,6 +495,9 @@ export function generatePrompt(
   outputMode: OutputMode = "text",
 ): string {
   const isJa = locale === "ja";
+  if (type === "narikiri") {
+    return buildNarikiriPrompt(locale, self, users, selfTweets, selfActivity, extras);
+  }
   const def = DIAGNOSIS_DEFS.find((d) => d.id === type)!;
   const base = isJa
     ? `以下はX（Twitter）ユーザー「@${self.screenName}」の過去30日間の公開データ（メンション交流・実際の投稿文面・活動統計・プロフィール）です。\n\nあなたは優秀なAI占い師／分析官です。このデータをもとに、「${def.title.ja}」をしてください。\n実際の投稿文面（語調・話題・頻度）を根拠として必ず引用しながら分析してください。\n\n【診断してほしいこと】\n${def.desc.ja}\n\n【着眼ポイント】\n${def.hints.ja}\n\n`

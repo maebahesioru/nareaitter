@@ -123,6 +123,7 @@ export function AIDiagnosisPanel({ self, users, selfTweets, selfActivity, extras
         ))}
       </div>
 
+      {selected !== "narikiri" && (
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
           {locale === "ja" ? "出力形式:" : "Output:"}
@@ -154,6 +155,14 @@ export function AIDiagnosisPanel({ self, users, selfTweets, selfActivity, extras
           </span>
         )}
       </div>
+      )}
+      {selected === "narikiri" && (
+        <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+          {locale === "ja"
+            ? "→ 全ツイートを丸ごと使う。コピーしてAIアプリ（ChatGPT・Grok・Claude等）に貼ると、準備メモ→本人の第一声まで自動でやってくれる。あとは普通に話しかけるだけ"
+            : "→ Uses ALL posts. Paste into an AI app (ChatGPT, Grok, Claude, ...): it warms up and opens the conversation as this person. Then just chat."}
+        </p>
+      )}
 
       {selected && def?.needsPartner && (
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
