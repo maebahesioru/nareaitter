@@ -640,6 +640,36 @@ export function getServedYahooPayload(name: string, buildCircle: boolean) {
 }
 
 /**
+ * メモリキャッシュに既にあればそれを返し、ビルド中ならその完了を最大 maxWaitMs 待つ。
+ * **新しいビルドは絶対に開始しない**（クローラー起点のOG画像生成などがコールドビルドを
+ * 誘発して全体を遅くする問題の対策・2026-10-16）。何もなければ null。
+ */
+export function peekOrAwaitServedYahooPayload(
+  name: string,
+  buildCircle: boolean,
+  maxWaitMs: number,
+): Promise<Record<string, unknown> | null> {
+  const key = `${name.toLowerCase()}:${buildCircle ? "circle" : "counts"}`;
+  const entry = memCache.get(key);
+  if (entry?.payload) return Promise.resolve(entry.payload);
+  if (!entry?.pending) return Promise.resolve(null);
+  const pending = entry.pending;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), maxWaitMs);
+    pending.then(
+      (payload) => {
+        clearTimeout(timer);
+        resolve(payload);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(null);
+      },
+    );
+  });
+}
+
+/**
  * メモリキャッシュに既にある場合だけ返す（ビルドしない）。
  * ハンドルページのSEO要約（SSR）用 — コールドでもページを高速に保つため、
  * ここでは絶対にフェッチしない。
