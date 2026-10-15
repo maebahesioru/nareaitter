@@ -82,12 +82,40 @@ export function writeYahooCircleCache(
   data: YahooCircleClientCache,
 ): void {
   if (typeof sessionStorage === "undefined") return;
+  const key = KEY_PREFIX + screenName.toLowerCase();
+  const save = () =>
+    sessionStorage.setItem(key, JSON.stringify({ t: Date.now(), data }));
   try {
-    sessionStorage.setItem(
-      KEY_PREFIX + screenName.toLowerCase(),
-      JSON.stringify({ t: Date.now(), data }),
-    );
+    save();
+    return;
   } catch {
-    /* 容量超過などは無視 */
+    /* 容量超過 → 古いエントリを捨てて再試行（特大サークルは1件が大きい） */
+  }
+  try {
+    const others: Array<[string, number]> = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const k = sessionStorage.key(i);
+      if (!k || k === key || !k.startsWith(KEY_PREFIX)) continue;
+      let t = 0;
+      try {
+        t =
+          (JSON.parse(sessionStorage.getItem(k) ?? "{}") as { t?: number }).t ??
+          0;
+      } catch {
+        /* t 不明は最古扱い */
+      }
+      others.push([k, t]);
+    }
+    others.sort((a, b) => a[1] - b[1]);
+    for (const [k] of others.slice(0, 3)) sessionStorage.removeItem(k);
+    try {
+      save();
+      return;
+    } catch {
+      for (const [k] of others) sessionStorage.removeItem(k);
+      save();
+    }
+  } catch {
+    /* 諦める（プライベートモード等） */
   }
 }
