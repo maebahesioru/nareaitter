@@ -371,9 +371,10 @@ export async function fetchMentionsToYou(
   return entries.slice(0, 10000);
 }
 
-export async function fetchMentionsFromYou(
-  screenName: string,
-): Promise<YahooRealtimeEntry[]> {
+export async function fetchMentionsFromYou(screenName: string): Promise<{
+  mentions: YahooRealtimeEntry[];
+  ownTweets: YahooRealtimeEntry[];
+}> {
   const name = normalizeScreenName(screenName);
   if (!name) throw new Error("screenName が空です。");
   const p = `ID:${name}`;
@@ -381,6 +382,18 @@ export async function fetchMentionsFromYou(
   const sweep = await fetchByStartAdaptive(p, {});
   const collected: YahooRealtimeEntry[] = [];
   const seen = new Set<string>();
+  // スイープで取れている「自分の全ツイート」（メンション有無を問わず・診断/なりきりの文脈用）
+  const ownTweets: YahooRealtimeEntry[] = [];
+  const ownSeen = new Set<string>();
+
+  const pushOwn = (list: YahooRealtimeEntry[]) => {
+    for (const e of list) {
+      if (!e?.id || ownSeen.has(e.id)) continue;
+      ownSeen.add(e.id);
+      ownTweets.push(e);
+      if (ownTweets.length >= 10000) return;
+    }
+  };
 
   const pushFiltered = (list: YahooRealtimeEntry[]) => {
     for (const e of list) {
@@ -392,12 +405,16 @@ export async function fetchMentionsFromYou(
     }
   };
 
+  pushOwn(sweep.entries);
   pushFiltered(sweep.entries);
 
   // 100 ページ（4,000 件）を全部使い切ったときだけ、カーソルでさらに奥を取る。
   // 通常のユーザーは適応スイープの時点で末尾に到達しているため、カーソルは回さない。
   if (sweep.complete || collected.length >= 10000) {
-    return collected.slice(0, 10000);
+    return {
+      mentions: collected.slice(0, 10000),
+      ownTweets: ownTweets.slice(0, 10000),
+    };
   }
 
   let cursor = oldestTweetIdInBatch(sweep.entries);
@@ -412,6 +429,7 @@ export async function fetchMentionsFromYou(
     const page = getEntries(r.data);
     if (page.length === 0) break;
 
+    pushOwn(page);
     pushFiltered(page);
     const next =
       r.data.timeline?.head?.oldestTweetId ??
@@ -422,7 +440,10 @@ export async function fetchMentionsFromYou(
     cursor = next;
   }
 
-  return collected.slice(0, 10000);
+  return {
+    mentions: collected.slice(0, 10000),
+    ownTweets: ownTweets.slice(0, 10000),
+  };
 }
 
 function oldestTweetIdInBatch(entries: YahooRealtimeEntry[]): string | undefined {
@@ -446,16 +467,21 @@ function oldestTweetIdInBatch(entries: YahooRealtimeEntry[]): string | undefined
 export async function fetchMentionsBothParallel(screenName: string): Promise<{
   mentionsToYou: YahooRealtimeEntry[];
   mentionsFromYou: YahooRealtimeEntry[];
+  ownTweets: YahooRealtimeEntry[];
 }> {
   const name = normalizeScreenName(screenName);
   if (!name) throw new Error("screenName が空です。");
 
-  const [mentionsToYou, mentionsFromYou] = await Promise.all([
+  const [mentionsToYou, fromYou] = await Promise.all([
     fetchMentionsToYou(name),
     fetchMentionsFromYou(name),
   ]);
 
-  return { mentionsToYou, mentionsFromYou };
+  return {
+    mentionsToYou,
+    mentionsFromYou: fromYou.mentions,
+    ownTweets: fromYou.ownTweets,
+  };
 }
 
 /** サロゲートペア（絵文字）を分断しない切り詰め位置を返す */
@@ -762,27 +788,4 @@ export function aggregateMentionTargets(
   return map;
 }
 
-/** 自分の直近ツイート（メンション無しも含む・1ページだけ取得） */
-export async function fetchSelfRecentTweets(
-  screenName: string,
-  limit = 12,
-): Promise<Array<{ text: string; hasMention: boolean; at: number }>> {
-  const name = normalizeScreenName(screenName);
-  if (!name) return [];
-  try {
-    const r = await fetchPaginationJson(`ID:${name}`, { start: 1 });
-    if (!r.ok) return [];
-    const entries = getEntries(r.data);
-    return entries
-      .map((e) => ({
-        text: cleanSnippet(e.displayText, 100) ?? "",
-        hasMention: (e.mentions?.length ?? 0) > 0,
-        at: typeof e.createdAt === "number" ? e.createdAt : 0,
-      }))
-      .filter((x) => x.text)
-      .sort((a, b) => b.at - a.at)
-      .slice(0, limit);
-  } catch {
-    return [];
-  }
-}
+/** 自分の直近ツイートは fetchMentionsFromYou のスイープ結果（ownTweets）から全件使う（追加リクエストなし）。 */

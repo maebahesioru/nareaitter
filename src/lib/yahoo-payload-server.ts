@@ -7,7 +7,6 @@ import {
   cleanSnippet,
   extractEmojis,
   fetchMentionsBothParallel,
-  fetchSelfRecentTweets,
   pickSelfProfileImageFromYahoo,
   remapMentionHandles,
 } from "@/lib/yahoo-realtime-fetch";
@@ -156,7 +155,8 @@ export async function buildYahooPayload(
   buildCircle: boolean,
 ): Promise<Record<string, unknown>> {
   const T0 = Date.now();
-  const { mentionsToYou, mentionsFromYou } = await fetchMentionsBothParallel(name);
+  const { mentionsToYou, mentionsFromYou, ownTweets } =
+    await fetchMentionsBothParallel(name);
   if (buildCircle) {
     console.log(
       `[payload] ${name} yahoo=${Date.now() - T0}ms to=${mentionsToYou.length} from=${mentionsFromYou.length}`,
@@ -197,12 +197,15 @@ export async function buildYahooPayload(
 
   if (buildCircle) {
     const T1 = Date.now();
-    // 自分の最近の投稿（メンション無しも含む・診断の文脈用）と活動統計
-    const selfTimeline = await fetchSelfRecentTweets(name, 12);
+    // 自分の投稿（メンション無しも含む・診断/なりきりの文脈用）と活動統計
+    // スイープ済みの全ツイートから作る（追加リクエストなし・12件制限は廃止）
+    const selfTimeline = ownTweets
+      .slice()
+      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+      .map((e) => cleanSnippet(e.displayText, 200) ?? "")
+      .filter(Boolean);
     if (selfTimeline.length) {
-      payload.recentSelfTweets = selfTimeline.map((t) =>
-        t.hasMention ? t.text : `${t.text}`,
-      );
+      payload.recentSelfTweets = selfTimeline;
     }
     const nowSec = Math.floor(Date.now() / 1000);
     const hours = new Array<number>(24).fill(0);
@@ -502,7 +505,7 @@ function getCachedYahooPayload(name: string, buildCircle: boolean) {
   return unstable_cache(
     () => buildYahooPayload(name, buildCircle),
     [
-      "yahoo-mentions-v15",
+      "yahoo-mentions-v16",
       name.toLowerCase(),
       buildCircle ? "circle" : "counts",
     ],
