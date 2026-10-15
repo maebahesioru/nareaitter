@@ -66,17 +66,19 @@ function drawCropCircle(ctx: CanvasRenderingContext2D, img: HTMLImageElement, cx
 
 // ── 画像ロードの共有キャッシュ ─────────────────────────────
 // URL→結果をモジュール寿命で保持し、除外→再構築パスやタブ再訪でも同じURLを再取得しない。
-// 失敗も null として記憶する（同一URLへの無限リトライ防止）。上限512でFIFO破棄。
+// 失敗も記憶する（同一URLへの無限リトライ防止）。失敗理由がタイムアウトかどうかも保持し、
+// 一時的な上流失速による誤除外（ツリーから人が消える）を防ぐ。上限512でFIFO破棄。
 const TREE_IMG_CACHE_MAX = 512;
-const treeImgCache = new Map<string, Promise<HTMLImageElement | null>>();
+type TreeImgResult = HTMLImageElement | "timeout" | "err";
+const treeImgCache = new Map<string, Promise<TreeImgResult>>();
 
-function loadTreeImage(url: string): Promise<HTMLImageElement | null> {
+function loadTreeImage(url: string): Promise<TreeImgResult> {
   const key = url.trim();
   const hit = treeImgCache.get(key);
   if (hit) return hit;
   const job = loadImage(key).then(
-    (img) => img,
-    () => null,
+    (img): TreeImgResult => img,
+    (e): TreeImgResult => (e instanceof Error && e.message === "timeout" ? "timeout" : "err"),
   );
   if (treeImgCache.size >= TREE_IMG_CACHE_MAX) {
     const oldest = treeImgCache.keys().next().value;
@@ -610,14 +612,18 @@ export function FamilyTreeCanvas({ self, users }: Props) {
 
       // 複数ソースを順に試す: プレビュー → HD → サーバー側フォールバック解決
       // （URL単位の結果はモジュール共有キャッシュ済み: 除外→再構築パスやタブ再訪で再取得しない）
-      const load = async (urls: Array<string | undefined>) => {
+      // sawTimeout: タイムアウトで諦めたURLが1つでもあるか。true の場合は「存在しない」と
+      // 断定できないため除外しない（上流失速中の誤除外＝ツリーから人が消えるのを防止）
+      const load = async (urls: Array<string | undefined>): Promise<{ img: HTMLImageElement | null; sawTimeout: boolean }> => {
+        let sawTimeout = false;
         for (const raw of urls) {
           const key = raw?.trim();
           if (!key) continue;
-          const img = await loadTreeImage(key);
-          if (img) return img;
+          const r = await loadTreeImage(key);
+          if (r instanceof HTMLImageElement) return { img: r, sawTimeout };
+          if (r === "timeout") sawTimeout = true;
         }
-        return null;
+        return { img: null, sawTimeout };
       };
 
       const drawRing = (n: TNode) => {
@@ -654,7 +660,7 @@ export function FamilyTreeCanvas({ self, users }: Props) {
         }
       };
 
-      const nodeResults: [string, "ok" | "fail"][] = [];
+      const nodeResults: [string, "ok" | "fail" | "timeout"][] = [];
       const jobs: Promise<void>[] = [];
       {
         let ni = 0;
@@ -673,13 +679,14 @@ export function FamilyTreeCanvas({ self, users }: Props) {
               : [n.node.user.avatarUrlPreview, n.node.user.avatarUrl, fallbackUrl];
             jobs.push(
               gate(async () => {
-                const img = await load(urls);
+                const { img, sawTimeout } = await load(urls);
                 if (cancelled) return;
-                nodeResults.push([screen, img ? "ok" : "fail"]);
+                nodeResults.push([screen, img ? "ok" : sawTimeout ? "timeout" : "fail"]);
                 if (img) drawCropCircle(ctx, img, n.x, n.y, n.r);
                 else {
                   // 画像が存在しないアカウント: 自動除外のため記録（最終手段で頭文字ディスク）
-                  if (!n.isSelf) failedRef.current.add(n.node.user.screenName);
+                  // タイムアウトは「存在しない」と断定できないため除外しない
+                  if (!n.isSelf && !sawTimeout) failedRef.current.add(n.node.user.screenName);
                   // 「デフォルトアバター」風の色付きディスク + 頭文字
                   const pal = isDark
                     ? ["#45516e", "#5d4a6e", "#496e52", "#6e5d45", "#6e4a55", "#4a6470"]
