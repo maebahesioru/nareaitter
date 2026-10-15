@@ -182,6 +182,32 @@ function fmtHours(hours: number[] | undefined): string {
   return `${type}（多い時間帯: ${labels.join("・")}）`;
 }
 
+/**
+ * プロンプトに載せる投稿・メンション本文の掃除（2026-10-16）:
+ * - URL（https://t.co/... 等のリンク）を除去。日本語に直接くっついていても壊さないよう
+ *   URLに使える文字だけを食う（「ちなみにhttps://t.co/xxは今は…」→「ちなみには今は…」）
+ * - 連続空白を1つに・前後をtrim
+ * - 除去の結果なにも残らない場合は null（呼び出し側で行ごと省く）
+ */
+export function sanitizePromptText(raw: string): string | null {
+  const cleaned = raw
+    .replace(/https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/gi, "")
+    .replace(/\b(?:t\.co|pic\.twitter\.com)\/[A-Za-z0-9_\-]+/gi, "")
+    .replace(/[ \t\u3000]+/g, " ")
+    .trim();
+  return cleaned.length ? cleaned : null;
+}
+
+/** テキスト配列を掃除して空要素を落とす */
+function sanitizePromptTexts(list: string[] | undefined): string[] {
+  const out: string[] = [];
+  for (const t of list ?? []) {
+    const c = sanitizePromptText(t);
+    if (c) out.push(c);
+  }
+  return out;
+}
+
 function buildSelfSection(
   self: SelfInfo,
   selfTweets: string[] | undefined,
@@ -279,11 +305,14 @@ function buildSelfSection(
       activityLines.push(isJa ? `時間帯別(被メンション): ${recv}` : `By time (received): ${recv}`);
       if (sent) activityLines.push(isJa ? `時間帯別(自分の投稿): ${sent}` : `By time (own posts): ${sent}`);
     }
-    if (selfActivity.revivalText && selfActivity.maxSilenceDays && selfActivity.maxSilenceDays >= 3) {
+    const cleanRevival = selfActivity.revivalText
+      ? sanitizePromptText(selfActivity.revivalText)
+      : null;
+    if (cleanRevival && selfActivity.maxSilenceDays && selfActivity.maxSilenceDays >= 3) {
       activityLines.push(
         isJa
-          ? `最長沈黙(${selfActivity.maxSilenceDays}日)明けの一言: 「${selfActivity.revivalText}」`
-          : `After longest silence (${selfActivity.maxSilenceDays}d): "${selfActivity.revivalText}"`,
+          ? `最長沈黙(${selfActivity.maxSilenceDays}日)明けの一言: 「${cleanRevival}」`
+          : `After longest silence (${selfActivity.maxSilenceDays}d): "${cleanRevival}"`,
       );
     }
     if (selfActivity.burstEpisodes !== undefined && selfActivity.burstEpisodes > 0) {
@@ -293,8 +322,10 @@ function buildSelfSection(
       activityLines.push(isJa ? `最も投稿が多かった日: ${selfActivity.peakDay.date}（${selfActivity.peakDay.n}件）` : `Peak day: ${selfActivity.peakDay.date} (${selfActivity.peakDay.n})`);
     }
   }
-  const tweetList = (selfTweets ?? []).map((t) => `- 「${t}」`).join("\n");
-  const bioLine = self.profileDescription ? `\nプロフィール文: 「${self.profileDescription}」` : "";
+  const cleanTweets = sanitizePromptTexts(selfTweets);
+  const tweetList = cleanTweets.map((t) => `- 「${t}」`).join("\n");
+  const cleanBio = self.profileDescription ? sanitizePromptText(self.profileDescription) : null;
+  const bioLine = cleanBio ? `\nプロフィール文: 「${cleanBio}」` : "";
   const profileHead =
     framing === "target"
       ? isJa
@@ -306,8 +337,8 @@ function buildSelfSection(
   const tweetsHead =
     framing === "target"
       ? isJa
-        ? `【投稿の全件（新しい順・${selfTweets?.length ?? 0}件）】`
-        : `【All posts (newest first, ${selfTweets?.length ?? 0})】`
+        ? `【投稿の全件（新しい順・${cleanTweets.length}件）】`
+        : `【All posts (newest first, ${cleanTweets.length})】`
       : isJa
         ? "【自分の最近の投稿（新しい順・メンションの有無は混在）】"
         : "【My recent posts (newest first; with/without mentions)】";
@@ -343,7 +374,8 @@ function userLine(u: CircleUser, idx: number, isJa: boolean, selfTopHour?: numbe
   const head = `  ${idx + 1}. @${u.screenName}（${name}メンション計 ${u.interactionCount ?? "?"}（相手→自分 ${u.mentionsReceived ?? "?"}・自分→相手 ${u.mentionsSent ?? "?"}）${span}${lastBit}${trend ? `・${trend}` : ""}）`;
   const lines = [head];
   const facts: string[] = [];
-  if (u.bio) facts.push(`bio「${u.bio}」`);
+  const cleanUserBio = u.bio ? sanitizePromptText(u.bio) : null;
+  if (cleanUserBio) facts.push(`bio「${cleanUserBio}」`);
   if (u.activeHour !== undefined) facts.push(`活動: ${hourLabel(u.activeHour)}`);
   if (u.replyThemMin !== undefined || u.replyMeMin !== undefined) {
     const rp: string[] = [];
@@ -373,20 +405,34 @@ function userLine(u: CircleUser, idx: number, isJa: boolean, selfTopHour?: numbe
     else if (diff >= 6) facts.push(isJa ? "生活リズム: 真逆" : "rhythm: opposite");
   }
   if (facts.length) lines.push(`      ${facts.join("・")}`);
-  if (u.latestFromThem) lines.push(`      相手の最近の投稿: 「${u.latestFromThem}」`);
-  if (u.latestFromThem2) lines.push(`      相手の1つ前の投稿: 「${u.latestFromThem2}」`);
-  if (u.latestToThem) lines.push(`      自分→相手の最近の投稿: 「${u.latestToThem}」`);
-  if (u.latestToThem2) lines.push(`      自分→相手の1つ前の投稿: 「${u.latestToThem2}」`);
-  if (u.firstFromThem || u.firstToThem) {
+  const q1 = u.latestFromThem ? sanitizePromptText(u.latestFromThem) : null;
+  if (q1) lines.push(`      相手の最近の投稿: 「${q1}」`);
+  const q2 = u.latestFromThem2 ? sanitizePromptText(u.latestFromThem2) : null;
+  if (q2) lines.push(`      相手の1つ前の投稿: 「${q2}」`);
+  const q3 = u.latestToThem ? sanitizePromptText(u.latestToThem) : null;
+  if (q3) lines.push(`      自分→相手の最近の投稿: 「${q3}」`);
+  const q4 = u.latestToThem2 ? sanitizePromptText(u.latestToThem2) : null;
+  if (q4) lines.push(`      自分→相手の1つ前の投稿: 「${q4}」`);
+  {
     const fm: string[] = [];
-    if (u.firstFromThem) fm.push(`相手「${u.firstFromThem}」`);
-    if (u.firstToThem) fm.push(`自分「${u.firstToThem}」`);
-    lines.push(`      初対面のやり取り: ${fm.join(" → ")}`);
+    const f1 = u.firstFromThem ? sanitizePromptText(u.firstFromThem) : null;
+    if (f1) fm.push(`相手「${f1}」`);
+    const f2 = u.firstToThem ? sanitizePromptText(u.firstToThem) : null;
+    if (f2) fm.push(`自分「${f2}」`);
+    if (fm.length) lines.push(`      初対面のやり取り: ${fm.join(" → ")}`);
   }
   if (u.exchange?.length) {
-    lines.push(`      【最近のやり取り（新しい順）】`);
-    for (const x of u.exchange) {
-      lines.push(`        ${fmtTs(x.t)} ${x.dir === "from" ? "相手→自分" : "自分→相手"}: 「${x.text}」`);
+    const rows = u.exchange
+      .map((x) => {
+        const c = sanitizePromptText(x.text);
+        return c
+          ? `        ${fmtTs(x.t)} ${x.dir === "from" ? "相手→自分" : "自分→相手"}: 「${c}」`
+          : null;
+      })
+      .filter((r): r is string => Boolean(r));
+    if (rows.length) {
+      lines.push(`      【最近のやり取り（新しい順）】`);
+      for (const r of rows) lines.push(r);
     }
   }
   return lines.join("\n");
@@ -441,13 +487,19 @@ function buildNarikiriPrompt(
     }
     if (extras.recentMentionsToYou?.length) {
       const rows = extras.recentMentionsToYou
-        .map((m) => `- ${fmtTs(m.at)} @${m.from}: 「${m.text}」`)
+        .map((m) => {
+          const c = sanitizePromptText(m.text);
+          return c ? `- ${fmtTs(m.at)} @${m.from}: 「${c}」` : null;
+        })
+        .filter((r): r is string => Boolean(r))
         .join("\n");
-      parts.push(
-        isJa
-          ? `【最近届いたメンション（参考情報・他者の発言。本人のセリフとして使わない）】\n${rows}`
-          : `【Recent mentions received (context only - other people's words, never use as own lines)】\n${rows}`,
-      );
+      if (rows) {
+        parts.push(
+          isJa
+            ? `【最近届いたメンション（参考情報・他者の発言。本人のセリフとして使わない）】\n${rows}`
+            : `【Recent mentions received (context only - other people's words, never use as own lines)】\n${rows}`,
+        );
+      }
     }
     if (extras.recentNewConn?.length) {
       const rows = extras.recentNewConn
@@ -522,9 +574,15 @@ export function generatePrompt(
     }
     if (extras.recentMentionsToYou?.length) {
       const rows = extras.recentMentionsToYou
-        .map((m) => `- ${fmtTs(m.at)} @${m.from}: 「${m.text}」`)
+        .map((m) => {
+          const c = sanitizePromptText(m.text);
+          return c ? `- ${fmtTs(m.at)} @${m.from}: 「${c}」` : null;
+        })
+        .filter((r): r is string => Boolean(r))
         .join("\n");
-      parts.push(isJa ? `【最近届いたメンション（全体・新しい順）】\n${rows}` : `【Latest mentions received】\n${rows}`);
+      if (rows) {
+        parts.push(isJa ? `【最近届いたメンション（全体・新しい順）】\n${rows}` : `【Latest mentions received】\n${rows}`);
+      }
     }
     if (extras.communityWords?.length) {
       parts.push(isJa ? `【界隈の頻出ワード（届いたメンションから）】\n${extras.communityWords.join("・")}` : `【Community frequent words】\n${extras.communityWords.join(", ")}`);
