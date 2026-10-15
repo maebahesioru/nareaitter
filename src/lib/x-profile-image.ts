@@ -233,6 +233,28 @@ export async function fetchUserBio(screenName: string): Promise<string | null> {
 }
 
 /**
+ * vxtwitter のフラットJSONから created_at（アカウント作成日）を得る。
+ * fxtwitter は created_at を返さなくなった（2026-10 実測: user.created_at 欠落）ため、
+ * アカウント年齢の査定シグナルを守るための保険。ISO 文字列に正規化して返す。
+ */
+async function fetchVxCreatedAt(cleanScreenName: string): Promise<string> {
+  try {
+    const res = await fetch(
+      `${VX_USER_API}/${encodeURIComponent(cleanScreenName)}`,
+      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(3500) },
+    );
+    if (!res.ok) return "";
+    const data = (await res.json()) as { created_at?: string };
+    const raw = data.created_at?.trim() || "";
+    if (!raw) return "";
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? raw : d.toISOString();
+  } catch {
+    return "";
+  }
+}
+
+/**
  * fxtwitter の完全なユーザープロファイルを取得する。
  * アカウント推定売却価格などの計算に使用。
  */
@@ -253,12 +275,17 @@ export async function resolveProfileData(screenName: string): Promise<XProfileDa
       const data = (await res.json()) as FxTwitterUserResponse;
       if (data.code !== 200 || !data.user) continue;
 
+      let joinedAt = data.user.created_at ?? "";
+      if (!joinedAt) {
+        joinedAt = await fetchVxCreatedAt(clean);
+      }
+
       return {
         followers: data.user.followers ?? 0,
         following: data.user.following ?? 0,
         tweets: data.user.tweets ?? 0,
         likes: data.user.likes ?? 0,
-        joinedAt: data.user.created_at ?? "",
+        joinedAt,
         description: cutSafeLocal((data.user.description ?? "").replace(/\s+/g, " ").trim(), 160) || undefined,
       };
     } catch {
