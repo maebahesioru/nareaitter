@@ -14,7 +14,10 @@ type FxTwitterUserResponse = {
     following?: number;
     tweets?: number;
     likes?: number;
+    /** 旧フィールド（2026-10現在は返らない） */
     created_at?: string;
+    /** 現行フィールド: アカウント作成日（'Thu Apr 10 10:28:19 +0000 2025' 形式・2026-10実測） */
+    joined?: string;
   };
 };
 
@@ -234,8 +237,9 @@ export async function fetchUserBio(screenName: string): Promise<string | null> {
 
 /**
  * vxtwitter のフラットJSONから created_at（アカウント作成日）を得る。
- * fxtwitter は created_at を返さなくなった（2026-10 実測: user.created_at 欠落）ため、
- * アカウント年齢の査定シグナルを守るための保険。ISO 文字列に正規化して返す。
+ * fx の joined / created_at が両方とも無い場合の保険。ISO 文字列に正規化して返す。
+ * 注意: アプリコンテナからは Cloudflare に 403 でブロックされることがある（2026-10 実測）ため、
+ * 通常は fx の `joined` フィールドで完結させ、ここは最終フォールバックとして残す。
  */
 async function fetchVxCreatedAt(cleanScreenName: string): Promise<string> {
   try {
@@ -246,12 +250,16 @@ async function fetchVxCreatedAt(cleanScreenName: string): Promise<string> {
     if (!res.ok) return "";
     const data = (await res.json()) as { created_at?: string };
     const raw = data.created_at?.trim() || "";
-    if (!raw) return "";
-    const d = new Date(raw);
-    return isNaN(d.getTime()) ? raw : d.toISOString();
+    return raw ? normalizeJoinedAt(raw) : "";
   } catch {
     return "";
   }
+}
+
+/** 'Thu Apr 10 10:28:19 +0000 2025' 等を ISO へ正規化。パース不能なら原文のまま返す */
+function normalizeJoinedAt(raw: string): string {
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? raw : d.toISOString();
 }
 
 /**
@@ -275,8 +283,10 @@ export async function resolveProfileData(screenName: string): Promise<XProfileDa
       const data = (await res.json()) as FxTwitterUserResponse;
       if (data.code !== 200 || !data.user) continue;
 
-      let joinedAt = data.user.created_at ?? "";
-      if (!joinedAt) {
+      let joinedAt = data.user.created_at ?? data.user.joined ?? "";
+      if (joinedAt) {
+        joinedAt = normalizeJoinedAt(joinedAt);
+      } else {
         joinedAt = await fetchVxCreatedAt(clean);
       }
 
