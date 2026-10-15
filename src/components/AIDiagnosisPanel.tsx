@@ -251,8 +251,8 @@ export function AIDiagnosisPanel({ self, users, selfTweets, selfActivity, extras
             <div className="flex flex-col gap-2 rounded-xl border border-amber-300/60 bg-amber-50/50 p-3 dark:border-amber-500/30 dark:bg-amber-950/20">
               <p className="text-xs leading-relaxed text-amber-800 dark:text-amber-200">
                 {locale === "ja"
-                  ? `ChatGPT等は1メッセージに長さ制限があります（このプロンプトは約${prompt.length.toLocaleString()}字）。下の分割コピーを順番に貼り付けて送信してください`
-                  : `ChatGPT etc. limit the length of one message (~${prompt.length.toLocaleString()} chars). Paste these parts in order.`}
+                  ? `ChatGPTの無料プラン（16kトークン）でも送れるよう、1通あたり最大約1.8万字に分割しています（このプロンプトは約${prompt.length.toLocaleString()}字）。順番に貼り付けて送信してください`
+                  : `Split so each part fits even ChatGPT's free plan (16k tokens, ~18k chars). This prompt is ~${prompt.length.toLocaleString()} chars — paste the parts in order.`}
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 {parts.map((part, i) => (

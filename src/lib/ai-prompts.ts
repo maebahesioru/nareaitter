@@ -210,13 +210,15 @@ function sanitizePromptTexts(list: string[] | undefined): string[] {
 
 /**
  * プロンプトをチャットAIの「1メッセージ上限」に収まるよう行単位で分割する（2026-10-16）。
- * ChatGPTは1メッセージの長さ制限があり「送信したメッセージが長すぎます」で弾かれるため、
- * 順番に貼り付けて送信できるよう分割する。**内容は一切失わない**（分割マーカーのみ付与）。
+ * ChatGPTは1メッセージの長さ制限（実質コンテキスト基準: 無料16kトークン / Plus 32k / Pro 128k）があり
+ * 「送信したメッセージが長すぎます」で弾かれるため、順番に貼り付けて送信できるよう分割する。
+ * 既定18,000字/通 = 日本語実測1.41字/トークン換算で約12.8kトークン → 無料プラン(16k)でも
+ * 返信ぶんの余裕を残して送れるサイズ。**内容は一切失わない**（分割マーカーのみ付与）。
  */
 export function splitPromptForChat(
   prompt: string,
   locale: "ja" | "en",
-  maxChars = 15000,
+  maxChars = 18000,
 ): string[] {
   if (prompt.length <= maxChars) return [prompt];
   const lines = prompt.split("\n");
