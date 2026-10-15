@@ -48,7 +48,16 @@ function parseAccountAgeDays(joinedAt?: string): number {
   }
 }
 
-/** フォロワー数→基盤価値（逓減カーブ。実売相場を参考にした段階レート） */
+/**
+ * フォロワー数→基盤価値（逓減カーブ。実売相場を参考にした段階レート）。
+ *
+ * 相場の実測アンカー（2026-10・国内流通市場）:
+ * - 買取業者の一般アカウント = 約1円/フォロワー（例: 7,700人 → 約7,700円）
+ * - 良質（活性・専門性あり） = 2〜5円/フォロワー（例: 7,700人 → 1.5万〜3.8万円）
+ * - 夜職・収益化・ビジネス用途 = 5〜10円/フォロワー（別次元の需要）
+ * 基盤は「普通のアカウント（交流ほぼなし）」が下限近くに来るように設計し、
+ * 活性・年季などの加点は base に対する割合（上限付き）で乗せる。
+ */
 function followerBaseValue(f: number): number {
   const tiers: Array<[number, number]> = [
     [1000, 2.2],
@@ -105,19 +114,41 @@ export function estimateAccountValue(users: CircleUser[], profile: SelfProfile):
     comment: followers < 100 ? "小規模だがニッチ需要あり" : followers < 1000 ? "駆け出し規模" : followers < 10000 ? "中堅規模" : "大口案件",
   });
 
-  // 2) エンゲージメント（30日の被メンション ÷ フォロワー）
+  // 2) エンゲージメント（30日の被メンション ÷ フォロワー）— 相場では「生きてるか」の主要加点。基盤の最大 +50%
   const engRate = received30d / Math.max(100, followers);
-  const engYen = Math.round(Math.min(40000, received30d * 8 * Math.min(3, Math.max(0.4, engRate * 8))));
+  let engPct = 0;
+  let engComment: string;
+  if (received30d <= 0) {
+    engComment = "30日の被メンションなし";
+  } else if (engRate >= 0.2) {
+    engPct = 0.5;
+    engComment = "フォロワーの2割以上と30日に交流（超活性・高評価）";
+  } else if (engRate >= 0.1) {
+    engPct = 0.35;
+    engComment = "比率は良好で生きている垢";
+  } else if (engRate >= 0.03) {
+    engPct = 0.18;
+    engComment = "交流は良好";
+  } else if (engRate >= 0.01) {
+    engPct = 0.05;
+    engComment = "交流は控えめ";
+  } else if (engRate < 0.003) {
+    engPct = -0.08;
+    engComment = "ほぼ休眠（買い手は減点）";
+  } else {
+    engComment = "交流は少なめ";
+  }
+  const engYen = Math.round(base * engPct);
   factors.push({
     id: "engagement",
     label: "エンゲージメント",
     value: `被メンション ${received30d}件/30日`,
     yen: engYen,
-    comment: engRate >= 0.5 ? "フォロワーに対し異常な交流量（化け物）" : engRate >= 0.15 ? "比率は良好で生きている垢" : "交流は控えめ",
+    comment: engComment,
   });
 
-  // 3) 交流ネットワーク
-  const netYen = Math.min(80000, uniqueUsers * 40 + mutualUsers * 120 + coreUsers * 200);
+  // 3) 交流ネットワーク — 相互の網は評価されるが、基盤比 +40% を上限に
+  const netYen = Math.min(Math.round(base * 0.4), uniqueUsers * 6 + mutualUsers * 18 + coreUsers * 30);
   factors.push({
     id: "network",
     label: "交流ネットワーク",
@@ -126,11 +157,10 @@ export function estimateAccountValue(users: CircleUser[], profile: SelfProfile):
     comment: mutualUsers >= 50 ? "相互の網が濃くコミュニティ内で有力" : mutualUsers >= 10 ? "そこそこの人的ネットワーク" : "ネットワークは薄め",
   });
 
-  // 4) 投稿の継続性
+  // 4) 投稿の継続性 — 投稿数・頻度は買い手の基本チェック項目。基盤の最大 +15%
   const tweetsPerDay = accountAgeDays > 0 ? tweets / accountAgeDays : 0;
-  const contYen =
-    Math.min(20000, sent30d * 6) +
-    (accountAgeDays > 0 ? Math.min(8000, Math.round(tweetsPerDay * 1200)) : 0);
+  const contRaw = sent30d * 2 + (accountAgeDays > 0 ? Math.round(tweetsPerDay * 250) : 0);
+  const contYen = Math.min(Math.round(base * 0.15), contRaw);
   factors.push({
     id: "continuity",
     label: "投稿の継続性",
@@ -142,8 +172,14 @@ export function estimateAccountValue(users: CircleUser[], profile: SelfProfile):
         : sent30d >= 30 ? `30日で${sent30d}件のメンション送信（活発）` : sent30d > 0 ? "交流は控えめ" : "30日の交流なし",
   });
 
-  // 5) アカウント年齢
-  const ageYen = Math.min(30000, Math.round(years * 4000));
+  // 5) アカウント年齢 — 古い垢（OLD）は買い手の主要チェック項目。基盤の最大 +15%
+  let agePct = 0;
+  if (years >= 8) agePct = 0.15;
+  else if (years >= 5) agePct = 0.12;
+  else if (years >= 3) agePct = 0.08;
+  else if (years >= 2) agePct = 0.05;
+  else if (years >= 1) agePct = 0.02;
+  const ageYen = Math.round(base * agePct);
   factors.push({
     id: "age",
     label: "アカウント年齢",
@@ -152,14 +188,14 @@ export function estimateAccountValue(users: CircleUser[], profile: SelfProfile):
     comment: accountAgeDays <= 0 ? "作成日不明（加点なし）" : years >= 5 ? "古参の風格（安定資産）" : years >= 2 ? "そこそこの年季" : "若いアカウント",
   });
 
-  // 6) フォロー比（権威性）
+  // 6) フォロー比（権威性）— フォロバ依存は買い手が減点
   const ratio = following > 0 ? followers / following : followers > 0 ? 99 : 0;
   let ratioYen = 0;
   let ratioComment = "フォロー数不明";
   if (following > 3 || followers > 3) {
-    if (ratio >= 3) { ratioYen = Math.min(20000, Math.round(base * 0.12)); ratioComment = "一方的に持たれる側（権威あり）"; }
-    else if (ratio >= 1) { ratioYen = Math.round(base * 0.04); ratioComment = "健全なバランス"; }
-    else { ratioYen = -Math.min(20000, Math.round(base * 0.15)); ratioComment = "フォロー過多（フォロバ依存気味）"; }
+    if (ratio >= 3) { ratioYen = Math.round(base * 0.08); ratioComment = "一方的に持たれる側（権威あり）"; }
+    else if (ratio >= 1) { ratioYen = Math.round(base * 0.03); ratioComment = "健全なバランス"; }
+    else { ratioYen = -Math.round(base * 0.12); ratioComment = "フォロー過多（フォロバ依存気味）"; }
   }
   factors.push({
     id: "ratio",
@@ -173,8 +209,8 @@ export function estimateAccountValue(users: CircleUser[], profile: SelfProfile):
   let concYen = 0;
   let concComment = "交流データ不足";
   if (uniqueUsers >= 5) {
-    if (topShare >= 0.35) { concYen = -Math.round(Math.min(30000, netYen * 0.35)); concComment = "特定の1人に交流が集中（属人的リスク）"; }
-    else if (topShare <= 0.08) { concYen = Math.round(Math.min(15000, netYen * 0.15)); concComment = "交流が広く分散（組織的価値）"; }
+    if (topShare >= 0.35) { concYen = -Math.round(base * 0.2); concComment = "特定の1人に交流が集中（属人的リスク）"; }
+    else if (topShare <= 0.08 && uniqueUsers >= 50) { concYen = Math.round(base * 0.08); concComment = "交流が広く分散（組織的価値）"; }
     else concComment = "適度に分散";
   }
   factors.push({
@@ -185,8 +221,8 @@ export function estimateAccountValue(users: CircleUser[], profile: SelfProfile):
     comment: concComment,
   });
 
-  // 8) いいね履歴（副次シグナル）
-  const likeYen = likes > 0 ? Math.min(5000, Math.round(likes * 0.02)) : 0;
+  // 8) いいね履歴（副次シグナル。基盤の最大 +5%）
+  const likeYen = likes > 0 ? Math.min(Math.round(base * 0.05), Math.round(likes * 0.01)) : 0;
   factors.push({
     id: "likes",
     label: "いいね履歴",
@@ -210,13 +246,14 @@ export function estimateAccountValue(users: CircleUser[], profile: SelfProfile):
   const priceLow = roundNice(Math.max(0, estimatedPriceYen * (1 - spread)));
   const priceHigh = roundNice(estimatedPriceYen * (1 + spread));
 
+  // グレード（実売相場のバンドに対応: 買取1円/f〜良質5円/fのレンジを S〜D に写像）
   let grade = "C";
   let gradeJa = "Cランク（低価格）";
-  if (estimatedPriceYen >= 300000) { grade = "S"; gradeJa = "Sランク（超優良）"; }
-  else if (estimatedPriceYen >= 100000) { grade = "A"; gradeJa = "Aランク（優良）"; }
-  else if (estimatedPriceYen >= 30000) { grade = "B"; gradeJa = "Bランク（普通）"; }
-  else if (estimatedPriceYen >= 5000) { grade = "C"; gradeJa = "Cランク（低価格）"; }
-  else { grade = "D"; gradeJa = "Dランク（価値なし）"; }
+  if (estimatedPriceYen >= 250000) { grade = "S"; gradeJa = "Sランク（超優良）"; }
+  else if (estimatedPriceYen >= 60000) { grade = "A"; gradeJa = "Aランク（優良）"; }
+  else if (estimatedPriceYen >= 10000) { grade = "B"; gradeJa = "Bランク（普通）"; }
+  else if (estimatedPriceYen >= 2000) { grade = "C"; gradeJa = "Cランク（低価格）"; }
+  else { grade = "D"; gradeJa = "Dランク（小規模）"; }
 
   return {
     estimatedPriceYen,
