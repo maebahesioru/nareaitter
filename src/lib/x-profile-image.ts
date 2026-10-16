@@ -75,8 +75,9 @@ async function fetchAvatarFxtwitter(cleanScreenName: string): Promise<AvatarProb
       url: upscaledTwitterProfileImageUrl(data.user.avatar_url.trim()),
       dead: false,
     };
-  } catch (e) {
-    return { url: null, dead: false, throttled: e instanceof Error && e.name === "TimeoutError" };
+  } catch {
+    // 例外（タイムアウト・ネットワーク断・解析失敗）はサービス側の一時劣化として扱う
+    return { url: null, dead: false, throttled: true };
   }
 }
 
@@ -94,8 +95,8 @@ async function fetchAvatarVxtwitter(cleanScreenName: string): Promise<AvatarProb
     const raw = data.profile_image_url?.trim();
     if (!raw) return { url: null, dead: false };
     return { url: upscaledTwitterProfileImageUrl(raw), dead: false };
-  } catch (e) {
-    return { url: null, dead: false, throttled: e instanceof Error && e.name === "TimeoutError" };
+  } catch {
+    return { url: null, dead: false, throttled: true };
   }
 }
 
@@ -112,7 +113,11 @@ async function fetchXAvatarUrlOnce(cleanScreenName: string): Promise<AvatarProbe
   if (fx.url) return fx;
   const vx = await fetchAvatarVxtwitter(cleanScreenName);
   if (vx.url) return vx;
-  return { url: null, dead: fx.dead && vx.dead };
+  return {
+    url: null,
+    dead: fx.dead && vx.dead,
+    throttled: Boolean(fx.throttled || vx.throttled),
+  };
 }
 
 /**
@@ -201,11 +206,9 @@ export async function fetchXAvatarUrl(screenName: string): Promise<string | null
       return null;
     }
   }
-  // ラダー全失敗: 429/タイムアウトなら即、通常失敗は連続3件で全体を一時休止
+  // ラダー全失敗: サービスの一時劣化（タイムアウト等）が連続したときだけ全体を一時休止。
+  // 「サービスは応答しているがURLが無い」良性ケースは数えない（誤停止防止・2026-10-16実測）
   if (sawThrottle) {
-    xAvatarPauseUntil = Date.now() + X_AVATAR_PAUSE_MS;
-    xAvatarFailStreak = 0;
-  } else {
     xAvatarFailStreak += 1;
     if (xAvatarFailStreak >= X_AVATAR_FAIL_STREAK) {
       xAvatarPauseUntil = Date.now() + X_AVATAR_PAUSE_MS;
