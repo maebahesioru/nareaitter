@@ -55,7 +55,7 @@ export function upscaledTwitterProfileImageUrl(url: string): string {
 }
 
 /** アバター取得の結果。dead=true は「アカウントが存在しない」等の確定失敗（リトライ無意味） */
-type AvatarProbe = { url: string | null; dead: boolean };
+type AvatarProbe = { url: string | null; dead: boolean; /** 429/タイムアウト等の一時劣化（ブレーカー用） */ throttled?: boolean };
 
 async function fetchAvatarFxtwitter(cleanScreenName: string): Promise<AvatarProbe> {
   try {
@@ -64,6 +64,7 @@ async function fetchAvatarFxtwitter(cleanScreenName: string): Promise<AvatarProb
       { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(3500) },
     );
     if (res.status === 404 || res.status === 410) return { url: null, dead: true };
+    if (res.status === 429) return { url: null, dead: false, throttled: true };
     if (!res.ok) return { url: null, dead: false };
     const data = (await res.json()) as FxTwitterUserResponse;
     if (data.code === 404) return { url: null, dead: true };
@@ -74,8 +75,8 @@ async function fetchAvatarFxtwitter(cleanScreenName: string): Promise<AvatarProb
       url: upscaledTwitterProfileImageUrl(data.user.avatar_url.trim()),
       dead: false,
     };
-  } catch {
-    return { url: null, dead: false };
+  } catch (e) {
+    return { url: null, dead: false, throttled: e instanceof Error && e.name === "TimeoutError" };
   }
 }
 
@@ -87,13 +88,14 @@ async function fetchAvatarVxtwitter(cleanScreenName: string): Promise<AvatarProb
       { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(3500) },
     );
     if (res.status === 404 || res.status === 410) return { url: null, dead: true };
+    if (res.status === 429) return { url: null, dead: false, throttled: true };
     if (!res.ok) return { url: null, dead: false };
     const data = (await res.json()) as { profile_image_url?: string };
     const raw = data.profile_image_url?.trim();
     if (!raw) return { url: null, dead: false };
     return { url: upscaledTwitterProfileImageUrl(raw), dead: false };
-  } catch {
-    return { url: null, dead: false };
+  } catch (e) {
+    return { url: null, dead: false, throttled: e instanceof Error && e.name === "TimeoutError" };
   }
 }
 
@@ -162,6 +164,12 @@ function writeAvatarDeadMem(key: string): void {
 const avatarNoUrlMem = new Map<string, number>();
 const AVATAR_NO_URL_TTL_MS = 10 * 60 * 1000;
 
+/** fx/vx が劣化（429・タイムアウト連発）している間のグローバル休止（2026-10-16・ビルド爆発防止） */
+let xAvatarPauseUntil = 0;
+let xAvatarFailStreak = 0;
+const X_AVATAR_PAUSE_MS = 90_000;
+const X_AVATAR_FAIL_STREAK = 3;
+
 export async function fetchXAvatarUrl(screenName: string): Promise<string | null> {
   const clean = screenName.replace(/^@/, "").trim();
   if (!clean) return null;
@@ -169,8 +177,11 @@ export async function fetchXAvatarUrl(screenName: string): Promise<string | null
   const cached = readAvatarMem(key);
   if (cached) return cached;
   if (isAvatarKnownDead(key)) return null;
+  // 劣化中は即あきらめる（ラダーを並列で何百回も払うとビルドが数分に伸びる）
+  if (Date.now() < xAvatarPauseUntil) return null;
   const noUrlUntil = avatarNoUrlMem.get(key);
   if (noUrlUntil && Date.now() < noUrlUntil) return null;
+  let sawThrottle = false;
   for (let attempt = 0; attempt < AVATAR_RETRY_ATTEMPTS; attempt++) {
     if (attempt > 0) {
       await new Promise((r) =>
@@ -178,14 +189,27 @@ export async function fetchXAvatarUrl(screenName: string): Promise<string | null
       );
     }
     const probe = await fetchXAvatarUrlOnce(clean);
+    if (probe.throttled) sawThrottle = true;
     if (probe.url?.trim()) {
       const trimmed = probe.url.trim();
+      xAvatarFailStreak = 0;
       writeAvatarMem(key, trimmed);
       return trimmed;
     }
     if (probe.dead) {
       writeAvatarDeadMem(key);
       return null;
+    }
+  }
+  // ラダー全失敗: 429/タイムアウトなら即、通常失敗は連続3件で全体を一時休止
+  if (sawThrottle) {
+    xAvatarPauseUntil = Date.now() + X_AVATAR_PAUSE_MS;
+    xAvatarFailStreak = 0;
+  } else {
+    xAvatarFailStreak += 1;
+    if (xAvatarFailStreak >= X_AVATAR_FAIL_STREAK) {
+      xAvatarPauseUntil = Date.now() + X_AVATAR_PAUSE_MS;
+      xAvatarFailStreak = 0;
     }
   }
   // タイムアウト等の失敗: 10分間は再試行しない（ビルド毎の36秒ラダー再支払いを防ぐ）

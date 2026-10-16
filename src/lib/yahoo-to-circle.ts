@@ -52,6 +52,17 @@ const ASSUMED_CANVAS_W = 720;
 /** Yahoo プレビュー画像が無いユーザーの HD 救済フェッチ上限（表示消え防止） */
 const HD_RESCUE_MAX = 128;
 
+/**
+ * HDアバター取得フェーズの全体時間予算（2026-10-16）。
+ * fx/vx が一時劣化（ハング/429）すると1人あたり最大14秒のリトライラダーが
+ * 数百人分積み上がり、ビルドが85〜173秒に爆発 → CFのタイムアウトで
+ * クライアントに「Failed to fetch」が出る事象を実測。予算超過後は残りをスキップし、
+ * Yahooプレビュー（avatarUrlPreview）で表示を維持する。
+ */
+const HD_BUDGET_MS = 20_000;
+/** 失敗救済2周目に追加で許す時間 */
+const HD_RESCUE2_BUDGET_MS = 8_000;
+
 function estimatedCellPx(peerCount: number): number {
   if (peerCount <= 0) return ASSUMED_CANVAS_W;
   const cols = Math.max(1, Math.ceil(Math.sqrt(peerCount)));
@@ -168,13 +179,16 @@ export async function yahooAggregatesToCircleUsers(
       if (!previewFor(rows[i].screen)) hdIndexes.add(i);
     }
   }
+  const hdStart = Date.now();
 
   const list = await mapWithConcurrency(
     rows,
     AVATAR_FETCH_CONCURRENCY,
     async (r, i) => {
       const preview = previewFor(r.screen);
-      const wantHd = hdForAll || hdIndexes.has(i);
+      const wantHd =
+        (hdForAll || hdIndexes.has(i)) &&
+        Date.now() - hdStart < HD_BUDGET_MS;
       const hdRaw = wantHd ? await resolveCircleAvatarUrl(r.screen) : null;
       const avatarUrl = hdRaw?.trim() || undefined;
       const keepContext = i < 64;
@@ -227,11 +241,15 @@ export async function yahooAggregatesToCircleUsers(
   list.forEach((u, i) => {
     if (!u.avatarUrl?.trim() && !u.avatarUrlPreview?.trim()) missing.push(i);
   });
-  if (missing.length > 0) {
+  if (
+    missing.length > 0 &&
+    Date.now() - hdStart < HD_BUDGET_MS + HD_RESCUE2_BUDGET_MS
+  ) {
     await mapWithConcurrency(
       missing,
       AVATAR_FETCH_CONCURRENCY,
       async (i) => {
+        if (Date.now() - hdStart >= HD_BUDGET_MS + HD_RESCUE2_BUDGET_MS) return;
         const hdRaw = await resolveCircleAvatarUrl(rows[i].screen);
         const hd = hdRaw?.trim();
         if (hd) list[i] = { ...list[i], avatarUrl: hd };

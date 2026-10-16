@@ -284,7 +284,11 @@ export function CircleApp(props: CircleAppProps = {}) {
         profileJoinedAt: data.profileJoinedAt,
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : t.errFetch);
+      // ネットワーク断・CFタイムアウト等は生の "Failed to fetch" を出さず、やわらかい文言にする
+      const isNetworkError =
+        e instanceof TypeError ||
+        (e instanceof Error && /failed to fetch|load failed|network/i.test(e.message));
+      setError(isNetworkError ? t.errFetch : e instanceof Error ? e.message : t.errFetch);
     } finally {
       setYahooLoading(false);
     }
