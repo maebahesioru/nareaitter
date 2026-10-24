@@ -25,7 +25,7 @@ const MAX_PEERS_PER_CIRCLE = 120;
 /** ユーザー表の上限（通常は数千人規模。暴走時の保険） */
 const MAX_USERS = 60_000;
 /** アバターURLは1件300〜400字と重いので保持件数に上限を設ける */
-const MAX_AVATARS = 6_000;
+const MAX_AVATARS = 40_000;
 const MAX_AVATAR_LEN = 400;
 /**
  * Yahoo が「画像なし」の相手に返す共通プレースホルダ。
@@ -583,7 +583,8 @@ export function setUserAvatar(screenName: string, url: string): boolean {
   if (!isUsableAvatar(url)) return false;
   if (isUsableAvatar(u.avatar)) return false; // 既に良いURLがある
   const hadAny = Boolean(u.avatar);
-  if ((rt.state.avatars ?? 0) >= MAX_AVATARS) return false;
+  // 差し替えは件数が増えないので上限の対象外
+  if (!hadAny && (rt.state.avatars ?? 0) >= MAX_AVATARS) return false;
   // プレースホルダ等の使えないURLが入っていた場合は差し替える（件数は増やさない）
   u.avatar = url;
   if (!hadAny) rt.state.avatars = (rt.state.avatars ?? 0) + 1;
@@ -635,11 +636,12 @@ export function getStatsCandidates(
 }
 
 /** 計測用（デバッグ・検証スクリプト向け） */
-export function getStatsMeta(): { circles: number; users: number; persist: PersistInfo } {
+export function getStatsMeta(): { circles: number; users: number; avatars: number; persist: PersistInfo } {
   const rt = runtime();
   return {
     circles: Object.keys(rt.state.circles).length,
     users: Object.keys(rt.state.users).length,
+    avatars: rt.state.avatars ?? 0,
     persist: { ...rt.persist },
   };
 }
