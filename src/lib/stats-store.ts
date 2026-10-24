@@ -18,12 +18,12 @@ import path from "node:path";
 import zlib from "node:zlib";
 
 const STATE_VERSION = 1;
-/** 直近何サークルぶんを保持するか（古いものは寄与を差し引いて捨てる） */
-const MAX_CIRCLES = 1_000;
-/** 1サークルあたり何位までを集計対象にするか（長すぎる尾は重複が多く伸びない） */
-const MAX_PEERS_PER_CIRCLE = 300;
-/** ユーザー表の上限（通常は数千人規模。暴走時の保険） */
-const MAX_USERS = 60_000;
+/**
+ * 件数の上限は設けない（データを勝手に捨てない）。
+ * 代わりに「保存できるサイズ」だけを予算として持ち、超えたときだけ
+ * 古いサークルから落とす。落とした件数は state.pruned に数えて可視化する。
+ */
+const PERSIST_SOFT_BYTES = 24 * 1024 * 1024;
 /** アバターURLは1件300〜400字と重いので保持件数に上限を設ける */
 const MAX_AVATARS = 40_000;
 const MAX_AVATAR_LEN = 400;
@@ -42,7 +42,8 @@ function isUsableAvatar(url: string | undefined): url is string {
   return true;
 }
 const PERSIST_MIN_INTERVAL_MS = 120_000;
-const PERSIST_MAX_BYTES = 48 * 1024 * 1024;
+/** これを超えたら書き込みを諦める最終防波堤（通常は到達しない） */
+const PERSIST_HARD_BYTES = 96 * 1024 * 1024;
 
 export type StatsPeerInput = {
   screenName: string;
@@ -204,6 +205,8 @@ type StatsState = {
   builds: number;
   /** 日次スナップショット（YYYY-MM-DD → 合計と上位ユーザーの累積） */
   daily?: Record<string, DailySnapshot>;
+  /** サイズ予算のために落としたサークル数 */
+  pruned?: number;
   /** 累積の延べ交流数 */
   totalMentions: number;
   /** アバターURLを保持している人数（保存サイズの上限管理用） */
@@ -216,6 +219,8 @@ type PersistInfo = {
   ok: boolean;
   lastError?: string;
   lastWrite: number;
+  /** 最後に書き出した JSON のバイト数 */
+  bytes: number;
 };
 
 type StatsRuntime = {
@@ -240,6 +245,7 @@ function emptyState(): StatsState {
     hours: new Array(24).fill(0),
     builds: 0,
     totalMentions: 0,
+    pruned: 0,
     daily: {},
   };
 }
@@ -268,7 +274,7 @@ function runtime(): StatsRuntime {
     const dir = resolveDir();
     rt = {
       state: emptyState(),
-      persist: { dir, file: undefined, ok: false, lastWrite: 0 },
+      persist: { dir, file: undefined, ok: false, lastWrite: 0, bytes: 0 },
       loaded: false,
       timer: null,
     };
@@ -421,22 +427,16 @@ function pruneUsers(state: StatsState): void {
   for (const [screen, u] of Object.entries(state.users)) {
     if (u.appearances <= 0 || u.rankedCircles <= 0) delete state.users[screen];
   }
-  const names = Object.keys(state.users);
-  if (names.length > MAX_USERS) {
-    names
-      .sort((a, b) => state.users[a].lastSeen - state.users[b].lastSeen)
-      .slice(0, names.length - MAX_USERS)
-      .forEach((n) => delete state.users[n]);
-  }
 }
 
-function pruneCircles(state: StatsState): void {
+/** 古いサークルから1つ落とす（サイズ予算を超えたときだけ使う） */
+function dropOldestCircle(state: StatsState): boolean {
   const handles = Object.keys(state.circles);
-  if (handles.length <= MAX_CIRCLES) return;
-  handles
-    .sort((a, b) => state.circles[a].at - state.circles[b].at)
-    .slice(0, handles.length - MAX_CIRCLES)
-    .forEach((h) => dropCircle(state, h));
+  if (handles.length === 0) return false;
+  const oldest = handles.reduce((a, b) => (state.circles[a].at <= state.circles[b].at ? a : b));
+  dropCircle(state, oldest);
+  state.pruned = (state.pruned ?? 0) + 1;
+  return true;
 }
 
 function serialize(rt: StatsRuntime): string {
@@ -459,8 +459,15 @@ function schedulePersist(rt: StatsRuntime, immediate = false): void {
     rt.timer = null;
     try {
       captureDaily(rt.state);
-      const body = serialize(rt);
-      if (body.length > PERSIST_MAX_BYTES) {
+      let body = serialize(rt);
+      // 予算を超えたときだけ、古いサークルを落として作り直す（件数では切らない）
+      let guard = 0;
+      while (Buffer.byteLength(body, "utf8") > PERSIST_SOFT_BYTES && guard < 5_000) {
+        if (!dropOldestCircle(rt.state)) break;
+        body = serialize(rt);
+        guard += 1;
+      }
+      if (Buffer.byteLength(body, "utf8") > PERSIST_HARD_BYTES) {
         rt.persist.ok = false;
         rt.persist.lastError = "payload too large";
         return;
@@ -472,6 +479,7 @@ function schedulePersist(rt: StatsRuntime, immediate = false): void {
       rt.persist.ok = true;
       rt.persist.lastError = undefined;
       rt.persist.lastWrite = Date.now();
+      rt.persist.bytes = Buffer.byteLength(body, "utf8");
     } catch (err) {
       rt.persist.ok = false;
       rt.persist.lastError = err instanceof Error ? err.message : String(err);
@@ -517,7 +525,7 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[]): void
     };
     const meta: Record<string, { displayName?: string; avatar?: string }> = {};
 
-    const limit = Math.min(peers.length, MAX_PEERS_PER_CIRCLE);
+    const limit = peers.length;
     for (let i = 0; i < limit; i++) {
       const p = peers[i];
       const screen = (p.screenName ?? "").trim().toLowerCase();
@@ -560,7 +568,6 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[]): void
     applyContribution(state, key, contrib, 1, meta, now);
     state.builds += 1;
     state.updatedAt = now;
-    pruneCircles(state);
     pruneUsers(state);
     // 新しいサークルが増えたときは即書き出し（再起動でデバウンス待ちの分を失わないように）
     schedulePersist(rt, isNew);
@@ -759,6 +766,7 @@ export function getStatsSnapshot(): StatsSnapshot {
       ok: rt.persist.ok,
       lastError: rt.persist.lastError,
       lastWrite: rt.persist.lastWrite,
+      bytes: rt.persist.bytes,
     },
     rankings: {
       appearances: byAppearances,
@@ -864,12 +872,13 @@ export function getStatsCandidates(
 }
 
 /** 計測用（デバッグ・検証スクリプト向け） */
-export function getStatsMeta(): { circles: number; users: number; avatars: number; persist: PersistInfo } {
+export function getStatsMeta(): { circles: number; users: number; avatars: number; pruned: number; persist: PersistInfo } {
   const rt = runtime();
   return {
     circles: Object.keys(rt.state.circles).length,
     users: Object.keys(rt.state.users).length,
     avatars: rt.state.avatars ?? 0,
+    pruned: rt.state.pruned ?? 0,
     persist: { ...rt.persist },
   };
 }
