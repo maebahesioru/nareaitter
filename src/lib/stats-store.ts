@@ -563,6 +563,49 @@ export function getStatsSnapshot(): StatsSnapshot {
  * まだ集計していないハンドルの候補（芋づる式クロールの起点）。
  * 集計済みサークルの登場人物を、何サークルに出ているかで重み付けして返す。
  */
+/** アバター解決を試した時刻（失敗の再試行間隔を空けるため） */
+const avatarTriedAt = new Map<string, number>();
+const AVATAR_RETRY_MS = 6 * 60 * 60 * 1000;
+
+/** 解決を試みたことを記録する（失敗した相手を毎回叩かない） */
+export function noteAvatarAttempt(screenName: string): void {
+  avatarTriedAt.set(screenName.toLowerCase(), Date.now());
+}
+
+/**
+ * 解決済みのアバターURLを保存する（fxtwitter の高画質URLを想定）。
+ * 保存済み・上限超過・不正URLは false。
+ */
+export function setUserAvatar(screenName: string, url: string): boolean {
+  const rt = runtime();
+  const u = rt.state.users[screenName];
+  if (!u) return false;
+  if (!isUsableAvatar(url)) return false;
+  if (isUsableAvatar(u.avatar)) return false; // 既に良いURLがある
+  const hadAny = Boolean(u.avatar);
+  if ((rt.state.avatars ?? 0) >= MAX_AVATARS) return false;
+  // プレースホルダ等の使えないURLが入っていた場合は差し替える（件数は増やさない）
+  u.avatar = url;
+  if (!hadAny) rt.state.avatars = (rt.state.avatars ?? 0) + 1;
+  schedulePersist(rt);
+  return true;
+}
+
+/** アバター未取得のハンドルを登場回数の多い順に返す（バックフィル対象） */
+export function getAvatarBackfillTargets(limit = 30): string[] {
+  const rt = runtime();
+  const now = Date.now();
+  const rows: Array<{ s: string; a: number }> = [];
+  for (const u of Object.values(rt.state.users)) {
+    if (isUsableAvatar(u.avatar)) continue;
+    const tried = avatarTriedAt.get(u.screenName.toLowerCase());
+    if (tried && now - tried < AVATAR_RETRY_MS) continue;
+    rows.push({ s: u.screenName, a: u.appearances });
+  }
+  rows.sort((a, b) => b.a - a.a);
+  return rows.slice(0, Math.max(1, Math.min(400, limit))).map((r) => r.s);
+}
+
 export function getStatsCandidates(
   limit = 200,
 ): { screenName: string; circles: number; mentions: number }[] {

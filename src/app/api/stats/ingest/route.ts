@@ -1,5 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { normalizeScreenName } from "@/lib/yahoo-realtime-fetch";
+import { backfillStatsAvatars } from "@/lib/stats-avatar-backfill";
 import { rebuildAndRecordStats } from "@/lib/yahoo-payload-server";
 import { getStatsMeta } from "@/lib/stats-store";
 
@@ -89,6 +90,9 @@ export async function POST(req: NextRequest) {
         { status: 502, headers: { "Cache-Control": "no-store" } },
       );
     }
+    after(() => {
+      void backfillStatsAvatars(24).catch(() => {});
+    });
     return NextResponse.json(
       {
         ok: true,
