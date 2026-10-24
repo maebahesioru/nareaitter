@@ -11,6 +11,7 @@ import {
   remapMentionHandles,
 } from "@/lib/yahoo-realtime-fetch";
 import { fetchUserBio } from "@/lib/x-profile-image";
+import { recordCircleStats } from "@/lib/stats-store";
 
 /** 頻出フレーズ抽出（日本語連続文字のn-gram・長さ重み付け＋部分重複排除） */
 function topPhrases(texts: string[], k = 6): string[] {
@@ -456,6 +457,8 @@ export async function buildYahooPayload(
       }),
     );
     payload.circleUsers = circleUsers;
+    // サイト全体の統計ストアへ集計（失敗してもペイロード生成は続行する）
+    recordCircleStats(name, circleUsers);
     // 界隈の出入り（直近14日）
     const nowMs = Date.now();
     const d14 = 14 * 86400 * 1000;
@@ -632,6 +635,17 @@ function serveWithSWR(
   return entry?.payload
     ? Promise.resolve({ payload: entry.payload, mode: "swr" })
     : pending.then((payload) => ({ payload, mode: "build" as const }));
+}
+
+/**
+ * 統計シード用: キャッシュを無視して必ずビルドし直す。
+ * ビルドの中で recordCircleStats が走るので、集計対象のサークルを能動的に増やせる。
+ * メモリSWRも最新化するため、直後の通常アクセスは古い内容を見ない。
+ */
+export async function rebuildAndRecordStats(name: string): Promise<Record<string, unknown>> {
+  const payload = await buildYahooPayload(name, true);
+  memCache.set(`${name.toLowerCase()}:circle`, { payload, ts: Date.now() });
+  return payload;
 }
 
 export function getServedYahooPayload(name: string, buildCircle: boolean) {

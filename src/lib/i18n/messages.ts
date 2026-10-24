@@ -101,6 +101,78 @@ export type Messages = {
   relationCousin: string;
   relationNephew: string;
   relationExtended: string;
+  statsTitle: string;
+  statsTagline: string;
+  statsBack: string;
+  statsStatCircles: string;
+  statsStatUsers: string;
+  statsStatMentions: string;
+  statsStatUpdated: string;
+  statsAppearTitle: string;
+  statsAppearHint: string;
+  statsMentionsTitle: string;
+  statsMentionsHint: string;
+  statsRankTitle: string;
+  statsRankHint: string;
+  statsColUser: string;
+  statsColAppear: string;
+  statsColAvgRank: string;
+  statsColMentions: string;
+  statsColBest: string;
+  statsUnitCircles: string;
+  statsUnitTimes: string;
+  statsUnitRank: string;
+  statsUnitPeople: string;
+  statsEmojisTitle: string;
+  statsEmojisHint: string;
+  statsLaughsTitle: string;
+  statsVocativesTitle: string;
+  statsHoursTitle: string;
+  statsHoursHint: string;
+  statsCirclesTitle: string;
+  statsRecentTitle: string;
+  statsRecentHint: string;
+  statsToday: string;
+  statsYesterday: string;
+  statsDaysAgo: string;
+  statsCirclesHint: string;
+  statsIngestTitle: string;
+  statsIngestHint: string;
+  statsIngestPlaceholder: string;
+  statsIngestBtn: string;
+  statsIngestBusy: string;
+  statsIngestOk: string;
+  statsIngestErr: string;
+  statsLoading: string;
+  statsEmpty: string;
+  statsNote: string;
+  statsError: string;
+  statsNavLink: string;
+  tabStats: string;
+  statsOf: string;
+  circleStatsTotal: string;
+  circleStatsPerPeer: string;
+  circleStatsPeers: string;
+  circleStatsMedian: string;
+  circleStatsTopShare: string;
+  circleStatsGini: string;
+  circleStatsGiniHint: string;
+  circleStatsMutual: string;
+  circleStatsReplySpeed: string;
+  circleStatsSeconds: string;
+  circleStatsMinutes: string;
+  circleStatsOldest: string;
+  circleStatsDays: string;
+  circleStatsConcentration: string;
+  circleStatsTop10: string;
+  circleStatsDirection: string;
+  circleStatsYouToThem: string;
+  circleStatsThemToYou: string;
+  circleStatsHours: string;
+  circleStatsEmojis: string;
+  circleStatsVocatives: string;
+  circleStatsLaughs: string;
+  circleStatsHint: string;
 };
 
 export const messages: Record<Locale, Messages> = {
@@ -224,6 +296,84 @@ export const messages: Record<Locale, Messages> = {
     relationCousin: "いとこ",
     relationNephew: "甥・姪",
     relationExtended: "その他の親戚",
+    statsTitle: "馴れ合い統計",
+    statsTagline:
+      "このサイトで集計されたサークルを横断して、「誰が一番よく出てくるか」をランキングしています。",
+    statsBack: "サークルに戻る",
+    statsStatCircles: "集計サークル",
+    statsStatUsers: "集計ユーザー",
+    statsStatMentions: "延べ交流",
+    statsStatUpdated: "最終更新",
+    statsAppearTitle: "サークル登場ランキング",
+    statsAppearHint:
+      "何人もの人のサークルに名前が出てくる人ほど上位。界隈の「常連」の目安です。",
+    statsMentionsTitle: "総交流数ランキング",
+    statsMentionsHint: "集計対象のサークルでのメンション数の合計です。",
+    statsRankTitle: "サークル内の平均順位が高い人",
+    statsRankHint:
+      "2サークル以上に登場した人だけを対象に、サークル内順位の平均が小さい順に並べています。",
+    statsColUser: "ユーザー",
+    statsColAppear: "登場",
+    statsColAvgRank: "平均順位",
+    statsColMentions: "延べ交流",
+    statsColBest: "最高",
+    statsUnitCircles: "サークル",
+    statsUnitTimes: "回",
+    statsUnitRank: "位",
+    statsUnitPeople: "人",
+    statsEmojisTitle: "よく使われる絵文字",
+    statsEmojisHint: "各サークル上位20人がよく使う絵文字を集計しています。",
+    statsLaughsTitle: "笑い方ランキング",
+    statsVocativesTitle: "呼ばれ方ランキング",
+    statsHoursTitle: "活動時間帯",
+    statsHoursHint: "各サークル上位64人の活動ピーク時間を集計しています。",
+    statsRecentTitle: "最近つながった人",
+    statsRecentHint: "最後に交流があったのが新しい順です（サークル横断）。",
+    statsToday: "今日",
+    statsYesterday: "昨日",
+    statsDaysAgo: "{n}日前",
+    statsCirclesTitle: "集計済みサークル",
+    statsCirclesHint: "ここに並ぶサークルのぶんだけランキングが育ちます。",
+    statsIngestTitle: "集計に追加する",
+    statsIngestHint:
+      "ハンドルを入れると、その人のサークルを生成してランキングに足します（1件10秒前後）。",
+    statsIngestPlaceholder: "例: maebahesioru2",
+    statsIngestBtn: "集計する",
+    statsIngestBusy: "集計中…",
+    statsIngestOk: "集計しました: @{handle}（{users}人）",
+    statsIngestErr: "集計に失敗しました。ハンドルを確認してください。",
+    statsLoading: "読み込み中…",
+    statsEmpty:
+      "まだ集計データがありません。下のフォームからハンドルを追加すると、ここにランキングが出ます。",
+    statsNote:
+      "※このサイトで表示されたサークルの履歴から積み上げた累積値です。各サークルの上位120人を対象に集計し、ランキングは上位50人まで表示しています。",
+    statsError: "統計を読み込めませんでした。",
+    statsNavLink: "サイト全体の統計を見る",
+    tabStats: "統計",
+    statsOf: "の統計",
+    circleStatsTotal: "延べ交流",
+    circleStatsPerPeer: "1人あたり平均",
+    circleStatsPeers: "相手の人数",
+    circleStatsMedian: "中央値",
+    circleStatsTopShare: "上位5人のシェア",
+    circleStatsGini: "ジニ係数",
+    circleStatsGiniHint: "0に近いほど均等",
+    circleStatsMutual: "双方向の相手",
+    circleStatsReplySpeed: "返信速度（相手→あなた）",
+    circleStatsSeconds: "秒",
+    circleStatsMinutes: "分",
+    circleStatsOldest: "最古の交流から",
+    circleStatsDays: "日",
+    circleStatsConcentration: "交流回数の多い順（上位10人）",
+    circleStatsTop10: "上位10人で全体の",
+    circleStatsDirection: "やりとりの向き",
+    circleStatsYouToThem: "あなた→相手",
+    circleStatsThemToYou: "相手→あなた",
+    circleStatsHours: "活動時間帯（上位64人）",
+    circleStatsEmojis: "よく使う絵文字",
+    circleStatsVocatives: "呼ばれ方",
+    circleStatsLaughs: "笑い方",
+    circleStatsHint: "このサークルのデータから計算した傾向です。上位20〜64人の情報を使う項目があります。",
   },
   en: {
     appTitle: "Twitter Mutual Circle",
@@ -344,6 +494,84 @@ export const messages: Record<Locale, Messages> = {
     relationCousin: "Cousin",
     relationNephew: "Nephew/Niece",
     relationExtended: "Extended Family",
+    statsTitle: "Mutual Circle Stats",
+    statsTagline:
+      "Cross-circle rankings built from the circles generated on this site — who shows up the most.",
+    statsBack: "Back to circles",
+    statsStatCircles: "Circles",
+    statsStatUsers: "Users",
+    statsStatMentions: "Mentions",
+    statsStatUpdated: "Updated",
+    statsAppearTitle: "Most circles appeared in",
+    statsAppearHint:
+      "People who show up in many different circles rank highest — a proxy for scene regulars.",
+    statsMentionsTitle: "Total mentions",
+    statsMentionsHint: "Sum of mentions across all tracked circles.",
+    statsRankTitle: "Best average rank",
+    statsRankHint:
+      "Only people in 2+ circles. Sorted by average position inside their circles.",
+    statsColUser: "User",
+    statsColAppear: "Circles",
+    statsColAvgRank: "Avg rank",
+    statsColMentions: "Mentions",
+    statsColBest: "Best",
+    statsUnitCircles: "circles",
+    statsUnitTimes: "×",
+    statsUnitRank: "",
+    statsUnitPeople: "people",
+    statsEmojisTitle: "Top emojis",
+    statsEmojisHint: "Emojis used most by the top 20 of each circle.",
+    statsLaughsTitle: "Laugh styles",
+    statsVocativesTitle: "How people call you",
+    statsHoursTitle: "Active hours",
+    statsHoursHint: "Peak activity hours of the top 64 of each circle.",
+    statsRecentTitle: "Recently active",
+    statsRecentHint: "Sorted by the most recent interaction, across circles.",
+    statsToday: "today",
+    statsYesterday: "yesterday",
+    statsDaysAgo: "{n}d ago",
+    statsCirclesTitle: "Tracked circles",
+    statsCirclesHint: "The rankings grow with every circle listed here.",
+    statsIngestTitle: "Add to the stats",
+    statsIngestHint:
+      "Enter a handle to build their circle and add it to the rankings (about 10s each).",
+    statsIngestPlaceholder: "e.g. maebahesioru2",
+    statsIngestBtn: "Add",
+    statsIngestBusy: "Adding…",
+    statsIngestOk: "Added @{handle} ({users} people)",
+    statsIngestErr: "Could not add that handle. Check the spelling and try again.",
+    statsLoading: "Loading…",
+    statsEmpty:
+      "No data yet. Add a handle with the form below and the rankings will appear here.",
+    statsNote:
+      "Cumulative values from circles viewed on this site. The top 120 people of each circle are counted; rankings show up to 50.",
+    statsError: "Could not load the stats.",
+    statsNavLink: "Site-wide stats",
+    tabStats: "Stats",
+    statsOf: " — stats",
+    circleStatsTotal: "Total mentions",
+    circleStatsPerPeer: "Per person",
+    circleStatsPeers: "People",
+    circleStatsMedian: "Median",
+    circleStatsTopShare: "Top 5 share",
+    circleStatsGini: "Gini",
+    circleStatsGiniHint: "0 = even",
+    circleStatsMutual: "Mutual",
+    circleStatsReplySpeed: "Reply speed (them→you)",
+    circleStatsSeconds: "s",
+    circleStatsMinutes: "m",
+    circleStatsOldest: "Oldest contact",
+    circleStatsDays: "d",
+    circleStatsConcentration: "By mentions (top 10)",
+    circleStatsTop10: "Top 10 share",
+    circleStatsDirection: "Direction",
+    circleStatsYouToThem: "You→them",
+    circleStatsThemToYou: "Them→you",
+    circleStatsHours: "Active hours (top 64)",
+    circleStatsEmojis: "Emojis",
+    circleStatsVocatives: "Vocatives",
+    circleStatsLaughs: "Laugh styles",
+    circleStatsHint: "Computed from this circle's data. Some figures use only the top 20–64 people.",
   },
 };
 

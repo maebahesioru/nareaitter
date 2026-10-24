@@ -47,7 +47,13 @@ const InteractionTable = dynamic(
   { ssr: false },
 );
 
-type ViewMode = "circle" | "table" | "family" | "ai" | "value";
+const CircleStatsPanel = dynamic(
+  () =>
+    import("./CircleStatsPanel").then((m) => ({ default: m.CircleStatsPanel })),
+  { ssr: false },
+);
+
+type ViewMode = "circle" | "table" | "stats" | "family" | "ai" | "value";
 
 type YahooMentionsResponse = {
   screenName: string;
@@ -381,6 +387,15 @@ export function CircleApp(props: CircleAppProps = {}) {
         <p className="mx-auto mt-3 max-w-xl text-pretty text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
           {t.tagline}
         </p>
+        <p className="mt-4">
+          <AppLink
+            href={locale === "en" ? "/en/stats" : "/stats"}
+            className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-white/70 px-3.5 py-1.5 text-xs font-semibold text-sky-700 shadow-sm transition hover:border-sky-400 hover:bg-white dark:border-sky-400/30 dark:bg-white/5 dark:text-sky-300 dark:hover:bg-white/10"
+          >
+            <span aria-hidden>📊</span>
+            {t.statsNavLink}
+          </AppLink>
+        </p>
         <div className="mx-auto mt-5 max-w-xl rounded-xl border border-emerald-500/25 bg-emerald-50/60 px-4 py-3 text-left text-xs leading-relaxed text-emerald-950 dark:border-emerald-500/30 dark:bg-emerald-950/25 dark:text-emerald-100/95">
           <p className="font-semibold text-emerald-800 dark:text-emerald-300">
             {t.trustHeadline}
@@ -539,6 +554,17 @@ export function CircleApp(props: CircleAppProps = {}) {
             </button>
             <button
               type="button"
+              onClick={() => setViewMode("stats")}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                viewMode === "stats"
+                  ? "bg-emerald-600 text-white shadow"
+                  : "bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+              }`}
+            >
+              {t.tabStats}
+            </button>
+            <button
+              type="button"
               onClick={() => setViewMode("family")}
               className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
                 viewMode === "family"
@@ -580,6 +606,8 @@ export function CircleApp(props: CircleAppProps = {}) {
                 ? t.tableTitle
                 : viewMode === "table"
                   ? t.tableDetailTitle
+                  : viewMode === "stats"
+                  ? t.statsOf
                   : viewMode === "family"
                     ? t.familyTitle
                     : viewMode === "ai"
@@ -617,8 +645,10 @@ export function CircleApp(props: CircleAppProps = {}) {
               </>
             ) : viewMode === "ai" ? (
               <AIDiagnosisPanel self={self} users={users} selfTweets={selfTweets} selfActivity={selfActivity} extras={promptExtras} />
-            ) : (
+            ) : viewMode === "value" ? (
               <AccountValuePanel self={self} users={users} />
+            ) : (
+              <CircleStatsPanel users={users} />
             )}
           </>
         ) : (
@@ -683,7 +713,16 @@ export function CircleApp(props: CircleAppProps = {}) {
 
       <footer className="space-y-2 text-center text-xs leading-relaxed text-zinc-500 dark:text-zinc-600">
         <p>{t.footerLegal}</p>
-        <p>
+        <p className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+          <AppLink
+            href={locale === "en" ? "/en/stats" : "/stats"}
+            className="font-medium text-sky-600 underline-offset-2 hover:text-sky-500 hover:underline dark:text-sky-400/90 dark:hover:text-sky-300"
+          >
+            {t.statsNavLink}
+          </AppLink>
+          <span aria-hidden className="text-zinc-300 dark:text-zinc-700">
+            ·
+          </span>
           <AppLink
             href={locale === "en" ? "/en/privacy" : "/privacy"}
             className="font-medium text-sky-600 underline-offset-2 hover:text-sky-500 hover:underline dark:text-sky-400/90 dark:hover:text-sky-300"
