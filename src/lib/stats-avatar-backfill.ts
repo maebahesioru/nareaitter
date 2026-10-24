@@ -13,8 +13,8 @@ import {
  * 統計側も同じものを持たせたいが、ペイロードビルド時には相手が上位20〜64人
  * ぶんしかHD解決されないので、未取得のユーザーを後から追いかけて埋める。
  *
- * 1回の呼び出しで最大 limit 人。並列3・1人あたり最大3.5秒で、
- * 失敗した相手は6時間スキップする（noteAvatarAttempt）。
+ * 1回の呼び出しで最大 limit 人。並列2・1人あたり最大3.5秒で、
+ * 失敗した相手は10分スキップする（noteAvatarAttempt → AVATAR_RETRY_MS）。
  */
 
 const inflight = new Set<string>();

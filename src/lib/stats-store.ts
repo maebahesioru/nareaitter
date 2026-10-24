@@ -1,51 +1,609 @@
-/**
- * サイト全体の「馴れ合い統計」を貯めるサーバー専用ストア。
- *
- * 各ハンドルのサークルがビルドされるたびに、そのサークルの上位メンバーを
- * 差分で足し引きして累積する（同じサークルを再ビルドしても二重計上しない）。
- * これにより「何人ものサークルに登場している人 = 界隈の中心人物」を出せる。
- *
- * - 状態は globalThis に置く（Next.js はページ/API でモジュール状態が別インスタンスに
- *   なり得るため。実測 2026-10 の教訓）
- * - ディスクへは JSON で間引いて書き出す。NAREAI_STATS_DIR が書けなければ
- *   メモリのみで動く（機能は止めない）
- * - 壊れたデータ・上限超過でも例外を投げない（payload ビルドを巻き込まない）
- */
-
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
-import { promisify } from "node:util";
+import { DatabaseSync, type Statement } from "node:sqlite";
 
-const STATE_VERSION = 1;
 /**
- * 件数の上限は設けない（データを勝手に捨てない）。
- * 代わりに「保存できるサイズ」だけを予算として持ち、超えたときだけ
- * 古いサークルから落とす。落とした件数は state.pruned に数えて可視化する。
+ * サークル横断の「馴れ合い統計」ストア。
+ *
+ * 保存先は Node 22 組み込みの `node:sqlite`（ネイティブ依存なし）。
+ * 以前は 1個の JSON ブロブを 120 秒ごとに gzip で書き直していたが、
+ * 記録のたびに全件シリアライズする必要があり、件数が増えると
+ * イベントループをブロックする同期処理になっていた。SQLite なら
+ * 追記は1サークル分の UPSERT だけで済み、件数上限も不要になる。
+ *
+ * 集計は「サークルを1回ビルドするたびに、その回の寄与を記録する」方式。
+ * 同じサークルを再ビルドしたときは前回の寄与を差し引いてから足すので
+ * 二重計上にならない（窓が前へ滑ったぶんだけが消える）。
  */
-/** gzip はスレッドプールで走らせる（イベントループを止めない） */
-const gzipAsync = promisify(zlib.gzip);
 
-const PERSIST_SOFT_BYTES = 64 * 1024 * 1024;
+const DB_NAME = "stats.sqlite";
+const LEGACY_GZ = "stats.json.gz";
+const LEGACY_JSON = "stats.json";
+
+const AVATAR_PLACEHOLDER = "BgIFgYJGVIVv8u0nVJvw8B2FauAYMF4jOP5zFJAV4i5e72TLbER0x";
 const MAX_AVATAR_LEN = 400;
-/**
- * Yahoo が「画像なし」の相手に返す共通プレースホルダ。
- * これを保存すると全員が同じデフォルトアイコンになるので捨てる
- * （表示側は /api/avatar-fallback で実アバターを解決する）。
- */
-const AVATAR_PLACEHOLDER = "rts-pctr.c.yimg.jp/BgIFgYJGVIVv8u0nVJvw8B2FauAYMF4jOP5zFJAV4i5e72TLbER0x";
 
-/** 保存に値するアバターURLか（プレースホルダ・長すぎるものは不可） */
-function isUsableAvatar(url: string | undefined): url is string {
+/** 書き出し間隔（WAL チェックポイントの間引き） */
+const PERSIST_MIN_INTERVAL_MS = 120_000;
+
+/** 日次スナップショットの保持日数 */
+const DAILY_KEEP_DAYS = 45;
+/** 日次スナップショットに残す上位人数 */
+const DAILY_TOP_N = 150;
+
+const GLOBAL_KEY = "__nareaiStatsSqliteV1";
+
+export type PersistInfo = {
+  dir: string;
+  file?: string;
+  ok: boolean;
+  lastError?: string;
+  lastWrite: number;
+  /** ディスク上の DB ファイルサイズ（バイト） */
+  bytes: number;
+  /** 直近のチェックポイント所要時間（ミリ秒） */
+  lastMs: number;
+};
+
+type Runtime = {
+  db: DatabaseSync | null;
+  dir: string;
+  file: string;
+  opened: boolean;
+  persist: PersistInfo;
+  timer: ReturnType<typeof setTimeout> | null;
+  stmts: Map<string, Statement>;
+  migrated: boolean;
+};
+
+type GlobalWithStats = typeof globalThis & { [GLOBAL_KEY]?: Runtime };
+
+// ---------------------------------------------------------------------------
+// 補助
+// ---------------------------------------------------------------------------
+
+function isUsableAvatar(url: string | null | undefined): url is string {
   if (!url) return false;
   if (url.length > MAX_AVATAR_LEN) return false;
   if (url.includes(AVATAR_PLACEHOLDER)) return false;
   return true;
 }
-const PERSIST_MIN_INTERVAL_MS = 120_000;
-/** これを超えたら書き込みを諦める最終防波堤（通常は到達しない） */
-const PERSIST_HARD_BYTES = 256 * 1024 * 1024;
+
+function resolveDir(): string {
+  const fromEnv = process.env.NAREAI_STATS_DIR?.trim();
+  const candidates = [
+    fromEnv,
+    path.join(process.cwd(), "data"),
+    path.join(os.tmpdir(), "nareai-stats"),
+  ].filter((d): d is string => Boolean(d));
+  for (const dir of candidates) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.accessSync(dir, fs.constants.W_OK);
+      return dir;
+    } catch {
+      /* 次の候補へ */
+    }
+  }
+  return path.join(os.tmpdir(), "nareai-stats");
+}
+
+/** ISO 文字列 → epoch 日数（不正なら undefined） */
+function toDayNum(iso: string | undefined | null): number | undefined {
+  if (!iso) return undefined;
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return undefined;
+  return Math.floor(ms / 86_400_000);
+}
+
+/** JST の YYYY-MM-DD */
+function dayKey(ms = Date.now()): string {
+  const d = new Date(ms + 9 * 3_600_000);
+  return d.toISOString().slice(0, 10);
+}
+
+function num(v: unknown, fallback = 0): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+}
+
+function optNum(v: number | undefined): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function str(v: unknown): string | null {
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+// ---------------------------------------------------------------------------
+// スキーマ
+// ---------------------------------------------------------------------------
+
+const SCHEMA = `
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA temp_store = MEMORY;
+
+CREATE TABLE IF NOT EXISTS circles (
+  handle TEXT PRIMARY KEY,
+  at     INTEGER NOT NULL,
+  total  INTEGER NOT NULL,
+  users  INTEGER NOT NULL
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS peers (
+  circle TEXT NOT NULL,
+  screen TEXT NOT NULL,
+  n  INTEGER NOT NULL,
+  r  INTEGER NOT NULL,
+  s  INTEGER NOT NULL,
+  k  INTEGER NOT NULL,
+  h  INTEGER,
+  l  INTEGER,
+  rm REAL,
+  fs INTEGER,
+  al REAL,
+  kr REAL,
+  w7 INTEGER,
+  wk0 INTEGER, wk1 INTEGER, wk2 INTEGER, wk3 INTEGER,
+  fi INTEGER,
+  PRIMARY KEY (circle, screen)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS users (
+  screen TEXT PRIMARY KEY,
+  display_name TEXT,
+  avatar TEXT,
+  appearances INTEGER NOT NULL DEFAULT 0,
+  mentions INTEGER NOT NULL DEFAULT 0,
+  received INTEGER NOT NULL DEFAULT 0,
+  sent INTEGER NOT NULL DEFAULT 0,
+  rank_sum INTEGER NOT NULL DEFAULT 0,
+  ranked_circles INTEGER NOT NULL DEFAULT 0,
+  best_rank INTEGER NOT NULL DEFAULT 2147483647,
+  first_seen INTEGER NOT NULL DEFAULT 0,
+  last_seen INTEGER NOT NULL DEFAULT 0,
+  last_active INTEGER,
+  rm_s REAL NOT NULL DEFAULT 0, rm_c INTEGER NOT NULL DEFAULT 0,
+  al_s REAL NOT NULL DEFAULT 0, al_c INTEGER NOT NULL DEFAULT 0,
+  kr_s REAL NOT NULL DEFAULT 0, kr_c INTEGER NOT NULL DEFAULT 0,
+  w7 INTEGER NOT NULL DEFAULT 0,
+  wk0 INTEGER NOT NULL DEFAULT 0, wk1 INTEGER NOT NULL DEFAULT 0,
+  wk2 INTEGER NOT NULL DEFAULT 0, wk3 INTEGER NOT NULL DEFAULT 0,
+  fst INTEGER,
+  fi INTEGER
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS users_by_app ON users(appearances DESC, mentions DESC);
+CREATE INDEX IF NOT EXISTS users_by_men ON users(mentions DESC);
+CREATE INDEX IF NOT EXISTS users_by_recent ON users(last_active DESC, last_seen DESC);
+
+CREATE TABLE IF NOT EXISTS agg (
+  kind TEXT NOT NULL,
+  key  TEXT NOT NULL,
+  n    INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (kind, key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS circle_agg (
+  circle TEXT NOT NULL,
+  kind   TEXT NOT NULL,
+  key    TEXT NOT NULL,
+  n      INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (circle, kind, key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS hours (
+  h INTEGER PRIMARY KEY,
+  n INTEGER NOT NULL DEFAULT 0
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS daily (
+  d   TEXT PRIMARY KEY,
+  m   INTEGER NOT NULL,
+  u   INTEGER NOT NULL,
+  top TEXT NOT NULL
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS avatar_tries (
+  screen TEXT PRIMARY KEY,
+  at     INTEGER NOT NULL
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS meta (
+  k TEXT PRIMARY KEY,
+  v TEXT NOT NULL
+) WITHOUT ROWID;
+`;
+
+// ---------------------------------------------------------------------------
+// 旧 JSON からの移行
+// ---------------------------------------------------------------------------
+
+type LegacyPeer = {
+  n?: number;
+  r?: number;
+  s?: number;
+  k?: number;
+  h?: number;
+  l?: number;
+  rm?: number;
+  fs?: number;
+  al?: number;
+  kr?: number;
+  w7?: number;
+  wk?: number[];
+  fi?: number;
+};
+
+type LegacyCircle = {
+  at?: number;
+  total?: number;
+  users?: number;
+  peers?: Record<string, LegacyPeer>;
+  emojis?: Record<string, number>;
+  laughs?: Record<string, number>;
+  vocatives?: Record<string, number>;
+};
+
+type LegacyUser = {
+  screenName?: string;
+  displayName?: string;
+  avatar?: string;
+  appearances?: number;
+  mentions?: number;
+  received?: number;
+  sent?: number;
+  rankSum?: number;
+  rankedCircles?: number;
+  bestRank?: number;
+  firstSeen?: number;
+  lastSeen?: number;
+  lastActive?: number;
+  rmS?: number;
+  rmC?: number;
+  alS?: number;
+  alC?: number;
+  krS?: number;
+  krC?: number;
+  w7?: number;
+  wk?: number[];
+  fst?: number;
+  fi?: number;
+};
+
+type LegacyState = {
+  updatedAt?: number;
+  builds?: number;
+  circles?: Record<string, LegacyCircle>;
+  users?: Record<string, LegacyUser>;
+  emojis?: Record<string, number>;
+  laughs?: Record<string, number>;
+  vocatives?: Record<string, number>;
+  hours?: number[];
+  daily?: Record<string, { m?: number; u?: number; top?: Array<[string, number]> }>;
+};
+
+function readLegacy(dir: string): LegacyState | null {
+  const candidates = [path.join(dir, LEGACY_GZ), path.join(dir, LEGACY_JSON)];
+  for (const file of candidates) {
+    try {
+      if (!fs.existsSync(file)) continue;
+      const buf = fs.readFileSync(file);
+      const raw = file.endsWith(".gz") ? zlib.gunzipSync(buf).toString("utf8") : buf.toString("utf8");
+      const parsed = JSON.parse(raw) as LegacyState;
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch {
+      /* 壊れていたら次へ */
+    }
+  }
+  return null;
+}
+
+function markLegacyMigrated(dir: string): void {
+  for (const name of [LEGACY_GZ, LEGACY_JSON]) {
+    const file = path.join(dir, name);
+    try {
+      if (fs.existsSync(file)) fs.renameSync(file, `${file}.migrated`);
+    } catch {
+      /* 失敗しても致命的ではない */
+    }
+  }
+}
+
+function importLegacy(db: DatabaseSync, state: LegacyState): number {
+  const insertCircle = db.prepare("INSERT OR REPLACE INTO circles(handle, at, total, users) VALUES(?,?,?,?)");
+  const insertPeer = db.prepare(
+    `INSERT OR REPLACE INTO peers(
+       circle, screen, n, r, s, k, h, l, rm, fs, al, kr, w7, wk0, wk1, wk2, wk3, fi
+     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  );
+  const insertUser = db.prepare(
+    `INSERT OR REPLACE INTO users(
+       screen, display_name, avatar, appearances, mentions, received, sent,
+       rank_sum, ranked_circles, best_rank, first_seen, last_seen, last_active,
+       rm_s, rm_c, al_s, al_c, kr_s, kr_c, w7, wk0, wk1, wk2, wk3, fst, fi
+     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  );
+
+  // 途中で落ちて半端に取り込まれると二度と再移行されないので、1トランザクションで入れる
+  db.exec("BEGIN IMMEDIATE;");
+  try {
+    const n = importLegacyRows(state, { insertCircle, insertPeer, insertUser, db });
+    db.exec("COMMIT;");
+    return n;
+  } catch (err) {
+    try {
+      db.exec("ROLLBACK;");
+    } catch {
+      /* noop */
+    }
+    throw err;
+  }
+}
+
+function importLegacyRows(
+  state: LegacyState,
+  io: {
+    db: DatabaseSync;
+    insertCircle: Statement;
+    insertPeer: Statement;
+    insertUser: Statement;
+  },
+): number {
+  const { db, insertCircle, insertPeer, insertUser } = io;
+
+  let circles = 0;
+  for (const [handle, c] of Object.entries(state.circles ?? {})) {
+    const peers = Object.entries(c.peers ?? {});
+    insertCircle.run(handle, num(c.at), num(c.total), num(c.users));
+    for (const [screen, p] of peers) {
+      const wk = Array.isArray(p.wk) && p.wk.length === 4 ? p.wk : [];
+      insertPeer.run(
+        handle,
+        screen,
+        num(p.n),
+        num(p.r),
+        num(p.s),
+        num(p.k, 1),
+        optNum(p.h),
+        optNum(p.l),
+        optNum(p.rm),
+        optNum(p.fs),
+        optNum(p.al),
+        optNum(p.kr),
+        optNum(p.w7),
+        optNum(wk[0]),
+        optNum(wk[1]),
+        optNum(wk[2]),
+        optNum(wk[3]),
+        optNum(p.fi),
+      );
+    }
+    circles += 1;
+  }
+
+  for (const u of Object.values(state.users ?? {})) {
+    const screen = (u.screenName ?? "").trim().toLowerCase();
+    if (!screen) continue;
+    const wk = Array.isArray(u.wk) && u.wk.length === 4 ? u.wk : [];
+    insertUser.run(
+      screen,
+      str(u.displayName),
+      isUsableAvatar(u.avatar) ? u.avatar : null,
+      num(u.appearances),
+      num(u.mentions),
+      num(u.received),
+      num(u.sent),
+      num(u.rankSum),
+      num(u.rankedCircles),
+      num(u.bestRank, 2147483647),
+      num(u.firstSeen),
+      num(u.lastSeen),
+      optNum(u.lastActive),
+      num(u.rmS),
+      num(u.rmC),
+      num(u.alS),
+      num(u.alC),
+      num(u.krS),
+      num(u.krC),
+      num(u.w7),
+      num(wk[0]),
+      num(wk[1]),
+      num(wk[2]),
+      num(wk[3]),
+      optNum(u.fst),
+      optNum(u.fi),
+    );
+  }
+
+  const insertAgg = db.prepare("INSERT OR REPLACE INTO agg(kind, key, n) VALUES(?,?,?)");
+  const aggMaps: Array<[string, Record<string, number>]> = [
+    ["emoji", state.emojis ?? {}],
+    ["laugh", state.laughs ?? {}],
+    ["vocative", state.vocatives ?? {}],
+  ];
+  for (const [kind, map] of aggMaps) {
+    for (const [key, n] of Object.entries(map)) {
+      if (num(n) > 0) insertAgg.run(kind, key, num(n));
+    }
+  }
+
+  const insertHour = db.prepare("INSERT OR REPLACE INTO hours(h, n) VALUES(?,?)");
+  if (Array.isArray(state.hours)) {
+    for (let h = 0; h < 24; h++) insertHour.run(h, num(state.hours[h]));
+  }
+
+  const insertDaily = db.prepare("INSERT OR REPLACE INTO daily(d, m, u, top) VALUES(?,?,?,?)");
+  for (const [d, v] of Object.entries(state.daily ?? {})) {
+    const top = Array.isArray(v.top) ? v.top.slice(0, DAILY_TOP_N) : [];
+    insertDaily.run(d, num(v.m), num(v.u), JSON.stringify(top));
+  }
+
+  setMeta(db, "updatedAt", String(num(state.updatedAt)));
+  setMeta(db, "builds", String(num(state.builds)));
+  return circles;
+}
+
+// ---------------------------------------------------------------------------
+// ランタイム
+// ---------------------------------------------------------------------------
+
+function setMeta(db: DatabaseSync, key: string, value: string): void {
+  db.prepare("INSERT INTO meta(k, v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v").run(key, value);
+}
+
+function getMeta(db: DatabaseSync, key: string): string | null {
+  const row = db.prepare("SELECT v FROM meta WHERE k=?").get(key);
+  return row ? String(row.v) : null;
+}
+
+function openDb(rt: Runtime): DatabaseSync {
+  fs.mkdirSync(rt.dir, { recursive: true });
+  const db = new DatabaseSync(rt.file);
+  db.exec(SCHEMA);
+  if (!rt.migrated) {
+    rt.migrated = true;
+    const hasCircles = db.prepare("SELECT COUNT(*) AS n FROM circles").get();
+    const empty = !hasCircles || Number(hasCircles.n ?? 0) === 0;
+    if (empty) {
+      const legacy = readLegacy(rt.dir);
+      if (legacy) {
+        try {
+          const n = importLegacy(db, legacy);
+          markLegacyMigrated(rt.dir);
+          rt.persist.lastError = `migrated ${n} circles from JSON`;
+        } catch (err) {
+          rt.persist.lastError = err instanceof Error ? err.message : String(err);
+        }
+      }
+    }
+  }
+  try {
+    const st = fs.statSync(rt.file);
+    rt.persist.bytes = st.size;
+    rt.persist.ok = true;
+    rt.persist.lastWrite = Date.now();
+  } catch {
+    /* まだ無い */
+  }
+  return db;
+}
+
+function runtime(): Runtime {
+  const g = globalThis as GlobalWithStats;
+  let rt = g[GLOBAL_KEY];
+  if (!rt) {
+    const dir = resolveDir();
+    const file = path.join(dir, DB_NAME);
+    rt = {
+      db: null,
+      dir,
+      file,
+      opened: false,
+      persist: { dir, file, ok: false, lastWrite: 0, bytes: 0, lastMs: 0 },
+      timer: null,
+      stmts: new Map(),
+      migrated: false,
+    };
+    g[GLOBAL_KEY] = rt;
+  }
+  if (!rt.opened) {
+    rt.opened = true;
+    try {
+      rt.db = openDb(rt);
+    } catch (err) {
+      rt.persist.ok = false;
+      rt.persist.lastError = err instanceof Error ? err.message : String(err);
+      rt.db = null;
+    }
+  }
+  return rt;
+}
+
+function stmt(rt: Runtime, sql: string): Statement {
+  const cached = rt.stmts.get(sql);
+  if (cached) return cached;
+  if (!rt.db) throw new Error("stats db is not open");
+  const prepared = rt.db.prepare(sql);
+  rt.stmts.set(sql, prepared);
+  return prepared;
+}
+
+// ---------------------------------------------------------------------------
+// 書き出し（WAL チェックポイント）
+// ---------------------------------------------------------------------------
+
+function captureDaily(db: DatabaseSync): void {
+  const key = dayKey();
+  const existing = db.prepare("SELECT 1 AS n FROM daily WHERE d=?").get(key);
+  if (existing) return;
+  const totals = db
+    .prepare("SELECT COALESCE(SUM(mentions),0) AS m, COUNT(*) AS u FROM users WHERE appearances>0")
+    .get();
+  const top = db
+    .prepare("SELECT screen, mentions FROM users WHERE appearances>0 ORDER BY mentions DESC LIMIT ?")
+    .all(DAILY_TOP_N) as Array<Record<string, unknown>>;
+  const payload = top.map((t) => [String(t.screen), Number(t.mentions ?? 0)] as [string, number]);
+  db.prepare("INSERT OR REPLACE INTO daily(d, m, u, top) VALUES(?,?,?,?)").run(
+    key,
+    Number(totals?.m ?? 0),
+    Number(totals?.u ?? 0),
+    JSON.stringify(payload),
+  );
+  const cutoff = dayKey(Date.now() - DAILY_KEEP_DAYS * 86_400_000);
+  db.prepare("DELETE FROM daily WHERE d < ?").run(cutoff);
+}
+
+async function persistNow(rt: Runtime): Promise<PersistInfo> {
+  if (!rt.db) return rt.persist;
+  const started = Date.now();
+  try {
+    captureDaily(rt.db);
+    rt.db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+    const st = fs.statSync(rt.file);
+    rt.persist.ok = true;
+    rt.persist.lastError = undefined;
+    rt.persist.bytes = st.size;
+    rt.persist.lastWrite = Date.now();
+  } catch (err) {
+    rt.persist.ok = false;
+    rt.persist.lastError = err instanceof Error ? err.message : String(err);
+  } finally {
+    rt.persist.lastMs = Date.now() - started;
+  }
+  return rt.persist;
+}
+
+function schedulePersist(rt: Runtime, immediate = false): void {
+  if (!rt.db) return;
+  if (rt.timer) {
+    if (!immediate) return;
+    clearTimeout(rt.timer);
+    rt.timer = null;
+  }
+  const wait = immediate ? 0 : Math.max(0, PERSIST_MIN_INTERVAL_MS - (Date.now() - rt.persist.lastWrite));
+  rt.timer = setTimeout(() => {
+    rt.timer = null;
+    void persistNow(rt);
+  }, wait);
+  rt.timer.unref?.();
+}
+
+/** 集計をディスクへ反映する（書き込み自体は記録時に済んでいる） */
+export async function flushStats(): Promise<PersistInfo> {
+  const rt = runtime();
+  if (rt.timer) {
+    clearTimeout(rt.timer);
+    rt.timer = null;
+  }
+  return persistNow(rt);
+}
+
+// ---------------------------------------------------------------------------
+// 記録
+// ---------------------------------------------------------------------------
 
 export type StatsPeerInput = {
   screenName: string;
@@ -76,473 +634,235 @@ export type StatsPeerInput = {
   firstInteractionAt?: string;
 };
 
-type PeerContribution = {
-  /** 交流回数 */
+type PeerRow = {
+  screen: string;
   n: number;
-  /** 相手→本人 */
   r: number;
-  /** 本人→相手 */
   s: number;
-  /** 最後に交流した日（epoch 日数）。並べ替え用に日単位で持つ */
-  l?: number;
-  /** サークル内順位（1始まり） */
   k: number;
-  /** 相手の活動ピーク時間帯（上位のみ） */
-  h?: number;
-  /** 返信速度（分・中央値） */
-  rm?: number;
-  /** 最速レス（秒） */
-  fs?: number;
-  /** 平均文字数 */
-  al?: number;
-  /** 敬語率 0-100 */
-  kr?: number;
-  /** 直近7日 */
-  w7?: number;
-  /** 週次（4） */
-  wk?: number[];
-  /** 初対面の日（epoch 日数） */
-  fi?: number;
+  h: number | null;
+  l: number | null;
+  rm: number | null;
+  fs: number | null;
+  al: number | null;
+  kr: number | null;
+  w7: number | null;
+  wk: [number | null, number | null, number | null, number | null];
+  fi: number | null;
 };
 
-type CircleContribution = {
-  at: number;
-  /** サークルの延べ交流数 */
-  total: number;
-  /** サークルの人数（上位120に切る前の実人数） */
-  users: number;
-  peers: Record<string, PeerContribution>;
-  emojis: Record<string, number>;
-  laughs: Record<string, number>;
-  vocatives: Record<string, number>;
-};
+const SUB_PEER = `
+  UPDATE users SET
+    appearances = MAX(0, appearances - 1),
+    mentions = MAX(0, mentions - ?),
+    received = MAX(0, received - ?),
+    sent = MAX(0, sent - ?),
+    rank_sum = MAX(0, rank_sum - ?),
+    ranked_circles = MAX(0, ranked_circles - 1),
+    rm_s = MAX(0, rm_s - ?), rm_c = MAX(0, rm_c - ?),
+    al_s = MAX(0, al_s - ?), al_c = MAX(0, al_c - ?),
+    kr_s = MAX(0, kr_s - ?), kr_c = MAX(0, kr_c - ?),
+    w7 = MAX(0, w7 - ?),
+    wk0 = MAX(0, wk0 - ?), wk1 = MAX(0, wk1 - ?),
+    wk2 = MAX(0, wk2 - ?), wk3 = MAX(0, wk3 - ?)
+  WHERE screen = ?`;
 
-export type StatsUser = {
-  screenName: string;
-  displayName?: string;
-  avatar?: string;
-  /** 登場したサークル数 */
-  appearances: number;
-  /** 延べ交流数 */
-  mentions: number;
-  received: number;
-  sent: number;
-  rankSum: number;
-  rankedCircles: number;
-  bestRank: number;
-  firstSeen: number;
-  lastSeen: number;
-  /** 実際の最終交流日（epoch 日数） */
-  lastActive?: number;
-  /** 返信速度の合計（分）と件数 */
-  rmS?: number;
-  rmC?: number;
-  /** 平均文字数の合計と件数 */
-  alS?: number;
-  alC?: number;
-  /** 敬語率の合計と件数 */
-  krS?: number;
-  krC?: number;
-  /** 直近7日の延べ交流 */
-  w7?: number;
-  /** 週次合計（4週前→今週） */
-  wk?: number[];
-  /** 記録した最速レス（秒・最小値） */
-  fst?: number;
-  /** 一番古い初対面の日（epoch 日数・最小値） */
-  fi?: number;
-};
+const UPSERT_PEER = `
+  INSERT INTO users(
+    screen, display_name, avatar, appearances, mentions, received, sent,
+    rank_sum, ranked_circles, best_rank, first_seen, last_seen, last_active,
+    rm_s, rm_c, al_s, al_c, kr_s, kr_c, w7, wk0, wk1, wk2, wk3, fst, fi
+  ) VALUES(?,?,?,1,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  ON CONFLICT(screen) DO UPDATE SET
+    display_name = COALESCE(users.display_name, excluded.display_name),
+    avatar = CASE
+      WHEN (users.avatar IS NULL OR users.avatar = '') AND excluded.avatar IS NOT NULL
+        THEN excluded.avatar
+      ELSE users.avatar END,
+    appearances = users.appearances + 1,
+    mentions = users.mentions + excluded.mentions,
+    received = users.received + excluded.received,
+    sent = users.sent + excluded.sent,
+    rank_sum = users.rank_sum + excluded.rank_sum,
+    ranked_circles = users.ranked_circles + 1,
+    best_rank = MIN(users.best_rank, excluded.best_rank),
+    last_seen = MAX(users.last_seen, excluded.last_seen),
+    last_active = CASE
+      WHEN excluded.last_active IS NULL THEN users.last_active
+      ELSE MAX(COALESCE(users.last_active, 0), excluded.last_active) END,
+    rm_s = users.rm_s + excluded.rm_s,
+    rm_c = users.rm_c + excluded.rm_c,
+    al_s = users.al_s + excluded.al_s,
+    al_c = users.al_c + excluded.al_c,
+    kr_s = users.kr_s + excluded.kr_s,
+    kr_c = users.kr_c + excluded.kr_c,
+    w7 = users.w7 + excluded.w7,
+    wk0 = users.wk0 + excluded.wk0,
+    wk1 = users.wk1 + excluded.wk1,
+    wk2 = users.wk2 + excluded.wk2,
+    wk3 = users.wk3 + excluded.wk3,
+    fst = CASE
+      WHEN excluded.fst IS NULL THEN users.fst
+      ELSE MIN(COALESCE(users.fst, 2147483647), excluded.fst) END,
+    fi = CASE
+      WHEN excluded.fi IS NULL THEN users.fi
+      ELSE MIN(COALESCE(users.fi, 2147483647), excluded.fi) END`;
 
-/** 1日ぶんのスナップショット（推移・伸び率の算出用） */
-type DailySnapshot = {
-  /** 延べ交流 */
-  m: number;
-  /** 人数 */
-  u: number;
-  /** 上位ユーザーの累積交流数 [screenName, mentions] */
-  top: Array<[string, number]>;
-};
-
-/** JST の YYYY-MM-DD */
-function dayKey(t = Date.now()): string {
-  const d = new Date(t + 9 * 3_600_000);
-  return d.toISOString().slice(0, 10);
+function bumpAgg(rt: Runtime, kind: string, key: string, delta: number): void {
+  stmt(
+    rt,
+    "INSERT INTO agg(kind, key, n) VALUES(?,?,?) ON CONFLICT(kind, key) DO UPDATE SET n = MAX(0, n + ?)",
+  ).run(kind, key, Math.max(0, delta), delta);
+  stmt(rt, "DELETE FROM agg WHERE kind=? AND key=? AND n<=0").run(kind, key);
 }
 
-/** ISO 文字列 → epoch 日数 */
-function toDayNum(iso: string | undefined): number | undefined {
-  if (!iso) return undefined;
-  const t = Date.parse(iso);
-  return Number.isFinite(t) ? Math.floor(t / 86_400_000) : undefined;
+function adjustHours(rt: Runtime, h: number, delta: number): void {
+  if (!(h >= 0 && h < 24)) return;
+  stmt(rt, "INSERT INTO hours(h, n) VALUES(?,?) ON CONFLICT(h) DO UPDATE SET n = MAX(0, n + ?)").run(
+    h,
+    Math.max(0, delta),
+    delta,
+  );
 }
 
-function captureDaily(state: StatsState): void {
-  try {
-    const key = dayKey();
-    const users = Object.values(state.users);
-    const top = [...users]
-      .sort((a, b) => b.mentions - a.mentions)
-      .slice(0, 150)
-      .map((u) => [u.screenName, u.mentions] as [string, number]);
-    state.daily = state.daily ?? {};
-    state.daily[key] = { m: Math.max(0, state.totalMentions), u: users.length, top };
-    const keys = Object.keys(state.daily).sort();
-    for (const k of keys.slice(0, Math.max(0, keys.length - 45))) delete state.daily[k];
-  } catch {
-    // スナップショット失敗は致命的ではない
-  }
-}
-
-type StatsState = {
-  version: number;
-  updatedAt: number;
-  circles: Record<string, CircleContribution>;
-  users: Record<string, StatsUser>;
-  emojis: Record<string, number>;
-  laughs: Record<string, number>;
-  vocatives: Record<string, number>;
-  /** 24時間ぶんの活動ピーク集計 */
-  hours: number[];
-  /** 記録したサークル更新回数（再ビルド含む） */
-  builds: number;
-  /** 日次スナップショット（YYYY-MM-DD → 合計と上位ユーザーの累積） */
-  daily?: Record<string, DailySnapshot>;
-  /** サイズ予算のために落としたサークル数 */
-  pruned?: number;
-  /** 累積の延べ交流数 */
-  totalMentions: number;
-  /** アバターURLを保持している人数（保存サイズの上限管理用） */
-  avatars?: number;
-};
-
-type PersistInfo = {
-  dir: string;
-  file?: string;
-  ok: boolean;
-  lastError?: string;
-  lastWrite: number;
-  /** 最後に書き出した JSON のバイト数 */
-  bytes: number;
-  /** 直近の保存にかかった時間（ms・シリアライズ+gzip+書き込み） */
-  lastMs: number;
-};
-
-type StatsRuntime = {
-  state: StatsState;
-  persist: PersistInfo;
-  loaded: boolean;
-  timer: ReturnType<typeof setTimeout> | null;
-  /** 書き込み中（多重実行の防止） */
-  busy: boolean;
-};
-
-const GLOBAL_KEY = "__nareaiStatsV1";
-type GlobalWithStats = typeof globalThis & { [GLOBAL_KEY]?: StatsRuntime };
-
-function emptyState(): StatsState {
-  return {
-    version: STATE_VERSION,
-    updatedAt: 0,
-    circles: {},
-    users: {},
-    emojis: {},
-    laughs: {},
-    vocatives: {},
-    hours: new Array(24).fill(0),
-    builds: 0,
-    totalMentions: 0,
-    pruned: 0,
-    daily: {},
-  };
-}
-
-function resolveDir(): string {
-  const fromEnv = process.env.NAREAI_STATS_DIR?.trim();
-  if (fromEnv) return fromEnv;
-  // 永続ボリュームがあればそこ、無ければ tmp（コンテナ再起動は耐える）
-  const candidates = [path.join(process.cwd(), "data"), path.join(os.tmpdir(), "nareai-stats")];
-  for (const dir of candidates) {
-    try {
-      fs.mkdirSync(dir, { recursive: true });
-      fs.accessSync(dir, fs.constants.W_OK);
-      return dir;
-    } catch {
-      /* 次の候補へ */
-    }
-  }
-  return path.join(os.tmpdir(), "nareai-stats");
-}
-
-function runtime(): StatsRuntime {
-  const g = globalThis as GlobalWithStats;
-  let rt = g[GLOBAL_KEY];
-  if (!rt) {
-    const dir = resolveDir();
-    rt = {
-      state: emptyState(),
-      persist: { dir, file: undefined, ok: false, lastWrite: 0, bytes: 0, lastMs: 0 },
-      loaded: false,
-      timer: null,
-      busy: false,
-    };
-    g[GLOBAL_KEY] = rt;
-  }
-  if (!rt.loaded) {
-    rt.loaded = true;
-    try {
-      const file = path.join(rt.persist.dir, "stats.json.gz");
-      rt.persist.file = file;
-      let raw: string;
-      try {
-        raw = zlib.gunzipSync(fs.readFileSync(file)).toString("utf8");
-      } catch {
-        // 旧形式（無圧縮）からの移行
-        raw = fs.readFileSync(path.join(rt.persist.dir, "stats.json"), "utf8");
-      }
-      const parsed = JSON.parse(raw) as StatsState;
-      if (parsed && parsed.version === STATE_VERSION) {
-        rt.state = {
-          ...emptyState(),
-          ...parsed,
-          hours:
-            Array.isArray(parsed.hours) && parsed.hours.length === 24
-              ? parsed.hours
-              : new Array(24).fill(0),
-        };
-        rt.persist.ok = true;
-        rt.persist.lastWrite = Date.now();
-      }
-    } catch {
-      /* 初回はファイルが無いだけ */
-    }
-  }
-  return rt;
-}
-
-function bump(map: Record<string, number>, key: string, delta: number): void {
-  const next = (map[key] ?? 0) + delta;
-  if (next <= 0) delete map[key];
-  else map[key] = next;
-}
-
-function applyContribution(
-  state: StatsState,
-  handle: string,
-  contrib: CircleContribution,
+/** 1サークルぶんの寄与を足す（sign=1）/ 引く（sign=-1） */
+function applyPeers(
+  rt: Runtime,
+  rows: PeerRow[],
   sign: 1 | -1,
-  meta?: Record<string, { displayName?: string; avatar?: string }>,
-  now = Date.now(),
+  meta: Map<string, { displayName?: string; avatar?: string }>,
+  now: number,
 ): void {
-  state.totalMentions += sign * contrib.total;
-  for (const [screen, peer] of Object.entries(contrib.peers)) {
-    let u = state.users[screen];
-    if (sign > 0) {
-      if (!u) {
-        u = {
-          screenName: screen,
-          appearances: 0,
-          mentions: 0,
-          received: 0,
-          sent: 0,
-          rankSum: 0,
-          rankedCircles: 0,
-          bestRank: Number.MAX_SAFE_INTEGER,
-          firstSeen: now,
-          lastSeen: now,
-        };
-        state.users[screen] = u;
-      }
-      const m = meta?.[screen];
-      if (m?.displayName && !u.displayName) u.displayName = m.displayName;
-      if (m?.avatar && !u.avatar && isUsableAvatar(m.avatar)) {
-        u.avatar = m.avatar;
-        state.avatars = (state.avatars ?? 0) + 1;
-      }
-      u.appearances += 1;
-      u.mentions += peer.n;
-      u.received += peer.r;
-      u.sent += peer.s;
-      u.rankSum += peer.k;
-      u.rankedCircles += 1;
-      if (peer.k < u.bestRank) u.bestRank = peer.k;
-      u.lastSeen = Math.max(u.lastSeen, now);
-      if (peer.l) u.lastActive = Math.max(u.lastActive ?? 0, peer.l);
-      if (peer.rm !== undefined) {
-        u.rmS = (u.rmS ?? 0) + peer.rm;
-        u.rmC = (u.rmC ?? 0) + 1;
-      }
-      if (peer.al !== undefined) {
-        u.alS = (u.alS ?? 0) + peer.al;
-        u.alC = (u.alC ?? 0) + 1;
-      }
-      if (peer.kr !== undefined) {
-        u.krS = (u.krS ?? 0) + peer.kr;
-        u.krC = (u.krC ?? 0) + 1;
-      }
-      if (peer.w7 !== undefined) u.w7 = (u.w7 ?? 0) + peer.w7;
-      if (peer.wk) u.wk = u.wk ? u.wk.map((v, i) => v + (peer.wk?.[i] ?? 0)) : [...peer.wk];
-      if (peer.fs !== undefined) u.fst = Math.min(u.fst ?? Number.MAX_SAFE_INTEGER, peer.fs);
-      if (peer.fi !== undefined) u.fi = Math.min(u.fi ?? Number.MAX_SAFE_INTEGER, peer.fi);
-    } else if (u) {
-      u.appearances -= 1;
-      u.mentions -= peer.n;
-      u.received -= peer.r;
-      u.sent -= peer.s;
-      u.rankSum -= peer.k;
-      u.rankedCircles -= 1;
-      if (peer.rm !== undefined) {
-        u.rmS = Math.max(0, (u.rmS ?? 0) - peer.rm);
-        u.rmC = Math.max(0, (u.rmC ?? 0) - 1);
-      }
-      if (peer.al !== undefined) {
-        u.alS = Math.max(0, (u.alS ?? 0) - peer.al);
-        u.alC = Math.max(0, (u.alC ?? 0) - 1);
-      }
-      if (peer.kr !== undefined) {
-        u.krS = Math.max(0, (u.krS ?? 0) - peer.kr);
-        u.krC = Math.max(0, (u.krC ?? 0) - 1);
-      }
-      if (peer.w7 !== undefined) u.w7 = Math.max(0, (u.w7 ?? 0) - peer.w7);
-      if (peer.wk && u.wk) u.wk = u.wk.map((v, i) => Math.max(0, v - (peer.wk?.[i] ?? 0)));
+  const sub = sign < 0 ? stmt(rt, SUB_PEER) : null;
+  const upsert = sign > 0 ? stmt(rt, UPSERT_PEER) : null;
+  for (const p of rows) {
+    const wk0 = p.wk[0] ?? 0;
+    const wk1 = p.wk[1] ?? 0;
+    const wk2 = p.wk[2] ?? 0;
+    const wk3 = p.wk[3] ?? 0;
+    const rmC = p.rm === null ? 0 : 1;
+    const alC = p.al === null ? 0 : 1;
+    const krC = p.kr === null ? 0 : 1;
+    if (sign > 0 && upsert) {
+      const m = meta.get(p.screen);
+      const avatar = isUsableAvatar(m?.avatar) ? m.avatar : null;
+      upsert.run(
+        p.screen,
+        m?.displayName ?? null,
+        avatar,
+        p.n,
+        p.r,
+        p.s,
+        p.k,
+        p.k,
+        now,
+        now,
+        p.l,
+        p.rm ?? 0,
+        rmC,
+        p.al ?? 0,
+        alC,
+        p.kr ?? 0,
+        krC,
+        p.w7 ?? 0,
+        wk0,
+        wk1,
+        wk2,
+        wk3,
+        p.fs,
+        p.fi,
+      );
+    } else if (sub) {
+      sub.run(
+        p.n,
+        p.r,
+        p.s,
+        p.k,
+        p.rm ?? 0,
+        rmC,
+        p.al ?? 0,
+        alC,
+        p.kr ?? 0,
+        krC,
+        p.w7 ?? 0,
+        wk0,
+        wk1,
+        wk2,
+        wk3,
+        p.screen,
+      );
     }
+    if (p.h !== null) adjustHours(rt, p.h, sign);
   }
-  for (const [e, n] of Object.entries(contrib.emojis)) bump(state.emojis, e, sign * n);
-  for (const [e, n] of Object.entries(contrib.laughs)) bump(state.laughs, e, sign * n);
-  for (const [e, n] of Object.entries(contrib.vocatives)) bump(state.vocatives, e, sign * n);
-  for (const [key, peer] of Object.entries(contrib.peers)) {
-    if (typeof peer.h === "number" && peer.h >= 0 && peer.h < 24) {
-      state.hours[peer.h] = Math.max(0, state.hours[peer.h] + sign);
-    }
-  }
-  void handle;
-}
-
-function dropCircle(state: StatsState, handle: string): void {
-  const c = state.circles[handle];
-  if (!c) return;
-  applyContribution(state, handle, c, -1);
-  delete state.circles[handle];
-}
-
-/** 寄与がなくなったユーザーを掃除（減算だけで消えた人） */
-function pruneUsers(state: StatsState): void {
-  for (const [screen, u] of Object.entries(state.users)) {
-    if (u.appearances <= 0 || u.rankedCircles <= 0) delete state.users[screen];
+  if (sign < 0) {
+    stmt(rt, "DELETE FROM users WHERE appearances<=0 OR ranked_circles<=0").run();
   }
 }
 
-/** 古いサークルから1つ落とす（サイズ予算を超えたときだけ使う） */
-function dropOldestCircle(state: StatsState): boolean {
-  const handles = Object.keys(state.circles);
-  if (handles.length === 0) return false;
-  const oldest = handles.reduce((a, b) => (state.circles[a].at <= state.circles[b].at ? a : b));
-  dropCircle(state, oldest);
-  state.pruned = (state.pruned ?? 0) + 1;
+function dropCircle(rt: Runtime, handle: string): boolean {
+  const circle = stmt(rt, "SELECT 1 AS n FROM circles WHERE handle=?").get(handle);
+  if (!circle) return false;
+  const peerRows = stmt(
+    rt,
+    `SELECT screen, n, r, s, k, h, l, rm, fs, al, kr, w7, wk0, wk1, wk2, wk3, fi
+     FROM peers WHERE circle=?`,
+  ).all(handle) as Array<Record<string, unknown>>;
+  const rows: PeerRow[] = peerRows.map((x) => ({
+    screen: String(x.screen),
+    n: Number(x.n ?? 0),
+    r: Number(x.r ?? 0),
+    s: Number(x.s ?? 0),
+    k: Number(x.k ?? 1),
+    h: x.h === null ? null : Number(x.h),
+    l: x.l === null ? null : Number(x.l),
+    rm: x.rm === null ? null : Number(x.rm),
+    fs: x.fs === null ? null : Number(x.fs),
+    al: x.al === null ? null : Number(x.al),
+    kr: x.kr === null ? null : Number(x.kr),
+    w7: x.w7 === null ? null : Number(x.w7),
+    wk: [
+      x.wk0 === null ? null : Number(x.wk0),
+      x.wk1 === null ? null : Number(x.wk1),
+      x.wk2 === null ? null : Number(x.wk2),
+      x.wk3 === null ? null : Number(x.wk3),
+    ],
+    fi: x.fi === null ? null : Number(x.fi),
+  }));
+  applyPeers(rt, rows, -1, new Map(), Date.now());
+
+  const prevAgg = stmt(rt, "SELECT kind, key, n FROM circle_agg WHERE circle=?").all(handle) as Array<
+    Record<string, unknown>
+  >;
+  for (const a of prevAgg) {
+    bumpAgg(rt, String(a.kind), String(a.key), -Number(a.n ?? 0));
+  }
+  stmt(rt, "DELETE FROM circle_agg WHERE circle=?").run(handle);
+  stmt(rt, "DELETE FROM peers WHERE circle=?").run(handle);
+  stmt(rt, "DELETE FROM circles WHERE handle=?").run(handle);
   return true;
-}
-
-function serialize(rt: StatsRuntime): string {
-  return JSON.stringify({ ...rt.state, version: STATE_VERSION });
-}
-
-/** 書き出しをスケジュール（多重呼び出しはデバウンス） */
-/**
- * ディスクへ書き出す。gzip と writeFile は非同期（イベントループを止めない）。
- * サイズは件数ではなく PERSIST_SOFT_BYTES を基準に、超えたぶんだけ古いサークルを落とす。
- */
-async function persistNow(rt: StatsRuntime): Promise<void> {
-  const file = rt.persist.file;
-  if (!file || rt.busy) return;
-  rt.busy = true;
-  const started = Date.now();
-  try {
-    captureDaily(rt.state);
-    let body = serialize(rt);
-    let guard = 0;
-    while (Buffer.byteLength(body, "utf8") > PERSIST_SOFT_BYTES && guard < 5_000) {
-      if (!dropOldestCircle(rt.state)) break;
-      body = serialize(rt);
-      guard += 1;
-    }
-    const bytes = Buffer.byteLength(body, "utf8");
-    if (bytes > PERSIST_HARD_BYTES) {
-      rt.persist.ok = false;
-      rt.persist.lastError = `payload too large (${Math.round(bytes / 1_048_576)}MB)`;
-      return;
-    }
-    const gz = await gzipAsync(Buffer.from(body, "utf8"));
-    const tmp = `${file}.tmp`;
-    await fs.promises.writeFile(tmp, gz);
-    await fs.promises.rename(tmp, file);
-    rt.persist.ok = true;
-    rt.persist.lastError = undefined;
-    rt.persist.lastWrite = Date.now();
-    rt.persist.bytes = bytes;
-  } catch (err) {
-    rt.persist.ok = false;
-    rt.persist.lastError = err instanceof Error ? err.message : String(err);
-  } finally {
-    rt.persist.lastMs = Date.now() - started;
-    rt.busy = false;
-  }
-}
-
-function schedulePersist(rt: StatsRuntime, immediate = false): void {
-  const file = rt.persist.file;
-  if (!file) return;
-  const wait = immediate
-    ? 0
-    : Math.max(0, PERSIST_MIN_INTERVAL_MS - (Date.now() - rt.persist.lastWrite));
-  if (rt.timer) {
-    if (!immediate) return;
-    clearTimeout(rt.timer);
-    rt.timer = null;
-  }
-  rt.timer = setTimeout(() => {
-    rt.timer = null;
-    void persistNow(rt);
-  }, wait);
-  // タイマーでプロセスを生かし続けない
-  rt.timer.unref?.();
-}
-
-/** 集計を即座にディスクへ書く（デプロイ前確認・API 用） */
-export async function flushStats(): Promise<PersistInfo> {
-  const rt = runtime();
-  if (rt.timer) {
-    clearTimeout(rt.timer);
-    rt.timer = null;
-  }
-  // 走っている書き込みが終わるのを待ってから、もう一度書く
-  for (let i = 0; i < 200 && rt.busy; i++) await new Promise((r) => setTimeout(r, 50));
-  await persistNow(rt);
-  return { ...rt.persist };
 }
 
 /**
  * 1サークルぶんの集計を記録する。
- * circleUsers は交流回数の降順で渡ってくる前提（payload 側でソート済み）。
+ * peers は交流回数の降順で渡ってくる前提（payload 側でソート済み）。
  */
 export function recordCircleStats(handle: string, peers: StatsPeerInput[]): void {
   try {
-    if (!handle || peers.length === 0) return;
+    if (!handle || !Array.isArray(peers) || peers.length === 0) return;
     const rt = runtime();
-    const state = rt.state;
+    if (!rt.db) return;
     const key = handle.trim().toLowerCase().replace(/^@+/, "");
     if (!key) return;
     const now = Date.now();
 
-
-    const contrib: CircleContribution = {
-      at: now,
-      total: 0,
-      users: peers.length,
-      peers: {},
-      emojis: {},
-      laughs: {},
-      vocatives: {},
-    };
-    const meta: Record<string, { displayName?: string; avatar?: string }> = {};
+    const rows: PeerRow[] = [];
+    const meta = new Map<string, { displayName?: string; avatar?: string }>();
+    const agg = new Map<string, Map<string, number>>([
+      ["emoji", new Map()],
+      ["laugh", new Map()],
+      ["vocative", new Map()],
+    ]);
+    let total = 0;
 
     const limit = peers.length;
     for (let i = 0; i < limit; i++) {
@@ -551,49 +871,112 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[]): void
       if (!screen || screen === key) continue;
       const n = Math.max(0, p.interactionCount ?? (p.mentionsReceived ?? 0) + (p.mentionsSent ?? 0));
       if (n <= 0) continue;
-      contrib.total += n;
-      const lastMs = p.lastInteractionAt ? Date.parse(p.lastInteractionAt) : Number.NaN;
-      contrib.peers[screen] = {
+      total += n;
+      const weekly = Array.isArray(p.weekly) && p.weekly.length === 4 ? p.weekly : null;
+      rows.push({
+        screen,
         n,
         r: Math.max(0, p.mentionsReceived ?? 0),
         s: Math.max(0, p.mentionsSent ?? 0),
         k: i + 1,
-        h: typeof p.activeHour === "number" ? p.activeHour : undefined,
-        l: Number.isFinite(lastMs) ? Math.floor(lastMs / 86_400_000) : undefined,
-        rm: typeof p.replyThemMin === "number" && p.replyThemMin >= 0 ? p.replyThemMin : undefined,
-        fs: typeof p.fastestThemSec === "number" && p.fastestThemSec > 0 ? p.fastestThemSec : undefined,
-        al: typeof p.avgLen === "number" && p.avgLen > 0 ? p.avgLen : undefined,
-        kr: typeof p.keigoRate === "number" && p.keigoRate >= 0 ? p.keigoRate : undefined,
-        w7: typeof p.mentionsLast7d === "number" ? p.mentionsLast7d : undefined,
-        wk: Array.isArray(p.weekly) && p.weekly.length === 4 ? p.weekly.map((v) => Math.max(0, Math.round(v))) : undefined,
-        fi: toDayNum(p.firstInteractionAt),
-      };
+        h: typeof p.activeHour === "number" && p.activeHour >= 0 && p.activeHour < 24 ? p.activeHour : null,
+        l: toDayNum(p.lastInteractionAt) ?? null,
+        rm: typeof p.replyThemMin === "number" && p.replyThemMin >= 0 ? p.replyThemMin : null,
+        fs: typeof p.fastestThemSec === "number" && p.fastestThemSec > 0 ? p.fastestThemSec : null,
+        al: typeof p.avgLen === "number" && p.avgLen > 0 ? p.avgLen : null,
+        kr: typeof p.keigoRate === "number" && p.keigoRate >= 0 ? p.keigoRate : null,
+        w7: typeof p.mentionsLast7d === "number" ? p.mentionsLast7d : null,
+        wk: weekly
+          ? [
+              Math.max(0, Math.round(weekly[0] ?? 0)),
+              Math.max(0, Math.round(weekly[1] ?? 0)),
+              Math.max(0, Math.round(weekly[2] ?? 0)),
+              Math.max(0, Math.round(weekly[3] ?? 0)),
+            ]
+          : [null, null, null, null],
+        fi: toDayNum(p.firstInteractionAt) ?? null,
+      });
       const rawAvatar = p.avatarUrl?.trim() || p.avatarUrlPreview?.trim() || undefined;
       const avatar = isUsableAvatar(rawAvatar) ? rawAvatar : undefined;
-      if (p.displayName || avatar) meta[screen] = { displayName: p.displayName, avatar };
+      if (p.displayName || avatar) meta.set(screen, { displayName: p.displayName, avatar });
       if (i < 20) {
-        for (const e of p.topEmojis ?? []) if (e) contrib.emojis[e] = (contrib.emojis[e] ?? 0) + 1;
-        if (p.laugh) contrib.laughs[p.laugh] = (contrib.laughs[p.laugh] ?? 0) + 1;
-        if (p.vocative) contrib.vocatives[p.vocative] = (contrib.vocatives[p.vocative] ?? 0) + 1;
+        for (const e of p.topEmojis ?? []) {
+          if (!e) continue;
+          agg.get("emoji")!.set(e, (agg.get("emoji")!.get(e) ?? 0) + 1);
+        }
+        if (p.laugh) agg.get("laugh")!.set(p.laugh, (agg.get("laugh")!.get(p.laugh) ?? 0) + 1);
+        if (p.vocative) agg.get("vocative")!.set(p.vocative, (agg.get("vocative")!.get(p.vocative) ?? 0) + 1);
       }
     }
-    // 中身が無いときは前回ぶんを消さない（消すとデータが減るだけ）
-    if (Object.keys(contrib.peers).length === 0) return;
 
-    // 前回ぶんを差し引く（再ビルドでの二重計上を防ぐ）
-    const isNew = !state.circles[key];
-    dropCircle(state, key);
-    state.circles[key] = contrib;
-    applyContribution(state, key, contrib, 1, meta, now);
-    state.builds += 1;
-    state.updatedAt = now;
-    pruneUsers(state);
-    // 新しいサークルが増えたときは即書き出し（再起動でデバウンス待ちの分を失わないように）
+    // 中身が無いときは前回ぶんを消さない
+    if (rows.length === 0) return;
+
+    const isNew = !stmt(rt, "SELECT 1 AS n FROM circles WHERE handle=?").get(key);
+    rt.db.exec("BEGIN IMMEDIATE;");
+    try {
+      dropCircle(rt, key);
+
+      stmt(rt, "INSERT INTO circles(handle, at, total, users) VALUES(?,?,?,?)").run(key, now, total, peers.length);
+    const insertPeer = stmt(
+      rt,
+      `INSERT INTO peers(
+         circle, screen, n, r, s, k, h, l, rm, fs, al, kr, w7, wk0, wk1, wk2, wk3, fi
+       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    );
+    for (const p of rows) {
+      insertPeer.run(
+        key,
+        p.screen,
+        p.n,
+        p.r,
+        p.s,
+        p.k,
+        p.h,
+        p.l,
+        p.rm,
+        p.fs,
+        p.al,
+        p.kr,
+        p.w7,
+        p.wk[0],
+        p.wk[1],
+        p.wk[2],
+        p.wk[3],
+        p.fi,
+      );
+    }
+    applyPeers(rt, rows, 1, meta, now);
+
+    const insertCircleAgg = stmt(rt, "INSERT OR REPLACE INTO circle_agg(circle, kind, key, n) VALUES(?,?,?,?)");
+    for (const [kind, map] of agg) {
+      for (const [k, n] of map) {
+        insertCircleAgg.run(key, kind, k, n);
+        bumpAgg(rt, kind, k, n);
+      }
+    }
+
+    setMeta(rt.db, "updatedAt", String(now));
+    const builds = Number(getMeta(rt.db, "builds") ?? "0") + 1;
+    setMeta(rt.db, "builds", String(builds));
+    rt.db.exec("COMMIT;");
     schedulePersist(rt, isNew);
+    } catch (inner) {
+      try {
+        rt.db.exec("ROLLBACK;");
+      } catch {
+        /* トランザクション外なら無視 */
+      }
+      throw inner;
+    }
   } catch {
-    // 統計は本機能のおまけ。payload ビルドを絶対に壊さない
+    // 統計はおまけ。payload ビルドを絶対に壊さない
   }
 }
+
+// ---------------------------------------------------------------------------
+// 読み出し
+// ---------------------------------------------------------------------------
 
 export type StatsRankRow = {
   screenName: string;
@@ -631,7 +1014,7 @@ export type StatsSnapshot = {
   userCount: number;
   totalMentions: number;
   builds: number;
-  persist: Omit<PersistInfo, "file"> & { file?: string };
+  persist: PersistInfo;
   rankings: {
     appearances: StatsRankRow[];
     mentions: StatsRankRow[];
@@ -653,159 +1036,237 @@ export type StatsSnapshot = {
   circles: StatsCircleRow[];
 };
 
-function toRow(u: StatsUser, appearances: number, mentions: number): StatsRankRow {
-  const avgRank = u.rankedCircles > 0 ? u.rankSum / u.rankedCircles : 999;
+const RANK_COLS = `screen, display_name, avatar, appearances, mentions, received, sent,
+  rank_sum, ranked_circles, best_rank, last_seen, last_active,
+  CASE WHEN ranked_circles > 0 THEN rank_sum * 1.0 / ranked_circles ELSE 999 END AS avg_rank`;
+
+function toRankRow(x: Record<string, unknown>): StatsRankRow {
+  const avatar = isUsableAvatar(str(x.avatar)) ? String(x.avatar) : undefined;
+  const lastActive = x.last_active === null || x.last_active === undefined ? null : Number(x.last_active);
   return {
-    screenName: u.screenName,
-    displayName: u.displayName,
-    avatar: isUsableAvatar(u.avatar) ? u.avatar : undefined,
-    appearances,
-    mentions,
-    received: Math.max(0, u.received),
-    sent: Math.max(0, u.sent),
-    avgRank: Math.round(avgRank * 10) / 10,
-    bestRank: u.bestRank === Number.MAX_SAFE_INTEGER ? 0 : u.bestRank,
-    lastSeen: u.lastActive ? u.lastActive * 86_400_000 : u.lastSeen,
+    screenName: String(x.screen),
+    displayName: str(x.display_name) ?? undefined,
+    avatar,
+    appearances: Number(x.appearances ?? 0),
+    mentions: Number(x.mentions ?? 0),
+    received: Number(x.received ?? 0),
+    sent: Number(x.sent ?? 0),
+    avgRank: Math.round(Number(x.avg_rank ?? 999) * 10) / 10,
+    bestRank: Number(x.best_rank ?? 0) >= 2147483647 ? 0 : Number(x.best_rank ?? 0),
+    lastSeen: lastActive ? lastActive * 86_400_000 : Number(x.last_seen ?? 0),
   };
 }
 
-function topEntries(map: Record<string, number>, limit: number): Array<{ key: string; n: number }> {
-  return Object.entries(map)
-    .filter(([, n]) => n > 0)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, limit)
-    .map(([key, n]) => ({ key, n }));
+function toMetricRow(x: Record<string, unknown>, value: number): StatsMetricRow {
+  return {
+    screenName: String(x.screen),
+    displayName: str(x.display_name) ?? undefined,
+    avatar: isUsableAvatar(str(x.avatar)) ? String(x.avatar) : undefined,
+    value: Math.round(value * 10) / 10,
+  };
+}
+
+function topAgg(rt: Runtime, kind: string, limit: number): Array<{ key: string; n: number }> {
+  const rows = stmt(rt, "SELECT key, n FROM agg WHERE kind=? AND n>0 ORDER BY n DESC LIMIT ?").all(kind, limit) as Array<
+    Record<string, unknown>
+  >;
+  return rows.map((r) => ({ key: String(r.key), n: Number(r.n ?? 0) }));
 }
 
 export function getStatsSnapshot(): StatsSnapshot {
   const rt = runtime();
-  const state = rt.state;
-  const users = Object.values(state.users).filter((u) => u.appearances > 0);
+  const db = rt.db;
+  if (!db) {
+    return {
+      updatedAt: 0,
+      circleCount: 0,
+      userCount: 0,
+      totalMentions: 0,
+      builds: 0,
+      persist: { ...rt.persist },
+      rankings: {
+        appearances: [],
+        mentions: [],
+        rank: [],
+        recent: [],
+        fastest: [],
+        reply: [],
+        longest: [],
+        keigo: [],
+        rising: [],
+        bond: [],
+        growth: [],
+      },
+      trend: [],
+      emojis: [],
+      laughs: [],
+      vocatives: [],
+      hours: new Array(24).fill(0) as number[],
+      circles: [],
+    };
+  }
 
-  const byAppearances = [...users]
-    .sort((a, b) => b.appearances - a.appearances || b.mentions - a.mentions)
-    .slice(0, 100)
-    .map((u) => toRow(u, u.appearances, u.mentions));
+  captureDaily(db);
 
-  const byMentions = [...users]
-    .sort((a, b) => b.mentions - a.mentions || b.appearances - a.appearances)
-    .slice(0, 60)
-    .map((u) => toRow(u, u.appearances, u.mentions));
+  const byAppearances = db
+    .prepare(`SELECT ${RANK_COLS} FROM users WHERE appearances>0 ORDER BY appearances DESC, mentions DESC LIMIT 100`)
+    .all()
+    .map(toRankRow);
 
-  const byRank = users
-    .filter((u) => u.rankedCircles >= 2)
-    .sort((a, b) => a.rankSum / a.rankedCircles - b.rankSum / b.rankedCircles || b.appearances - a.appearances)
-    .slice(0, 40)
-    .map((u) => toRow(u, u.appearances, u.mentions));
+  const byMentions = db
+    .prepare(`SELECT ${RANK_COLS} FROM users WHERE appearances>0 ORDER BY mentions DESC, appearances DESC LIMIT 60`)
+    .all()
+    .map(toRankRow);
 
-  const metricRow = (u: StatsUser, value: number): StatsMetricRow => ({
-    screenName: u.screenName,
-    displayName: u.displayName,
-    avatar: isUsableAvatar(u.avatar) ? u.avatar : undefined,
-    value: Math.round(value * 10) / 10,
-  });
-
-  const byFastest = users
-    .filter((u) => typeof u.fst === "number" && (u.fst ?? 0) > 0 && u.fst !== Number.MAX_SAFE_INTEGER)
-    .sort((a, b) => (a.fst ?? 0) - (b.fst ?? 0))
-    .slice(0, 30)
-    .map((u) => metricRow(u, u.fst ?? 0));
-
-  const byReply = users
-    .filter((u) => (u.rmC ?? 0) > 0)
-    .sort((a, b) => (a.rmS ?? 0) / (a.rmC ?? 1) - (b.rmS ?? 0) / (b.rmC ?? 1))
-    .slice(0, 30)
-    .map((u) => metricRow(u, (u.rmS ?? 0) / (u.rmC ?? 1)));
-
-  const byLongest = users
-    .filter((u) => (u.alC ?? 0) > 0)
-    // 元テキストが長さ上限で切られているため上限付近は同点になる。同点は交流数で割る
-    .sort(
-      (a, b) =>
-        (b.alS ?? 0) / (b.alC ?? 1) - (a.alS ?? 0) / (a.alC ?? 1) || b.mentions - a.mentions,
+  const byRank = db
+    .prepare(
+      `SELECT ${RANK_COLS} FROM users WHERE ranked_circles>=2
+       ORDER BY (rank_sum * 1.0 / ranked_circles) ASC, appearances DESC LIMIT 40`,
     )
-    .slice(0, 30)
-    .map((u) => metricRow(u, (u.alS ?? 0) / (u.alC ?? 1)));
+    .all()
+    .map(toRankRow);
 
-  const byKeigo = users
-    .filter((u) => (u.krC ?? 0) >= 2)
-    .sort((a, b) => (b.krS ?? 0) / (b.krC ?? 1) - (a.krS ?? 0) / (a.krC ?? 1))
-    .slice(0, 20)
-    .map((u) => metricRow(u, (u.krS ?? 0) / (u.krC ?? 1)));
+  const recent = db
+    .prepare(
+      `SELECT ${RANK_COLS} FROM users WHERE appearances>0
+       ORDER BY COALESCE(last_active, 0) DESC, last_seen DESC LIMIT 20`,
+    )
+    .all()
+    .map(toRankRow);
 
-  const byRising = users
-    .filter((u) => (u.w7 ?? 0) > 0)
-    .sort((a, b) => (b.w7 ?? 0) - (a.w7 ?? 0) || b.mentions - a.mentions)
-    .slice(0, 30)
-    .map((u) => metricRow(u, u.w7 ?? 0));
+  const fastest = db
+    .prepare(
+      `SELECT screen, display_name, avatar, fst AS v FROM users
+       WHERE appearances>0 AND fst IS NOT NULL AND fst > 0
+       ORDER BY fst ASC LIMIT 30`,
+    )
+    .all()
+    .map((x) => toMetricRow(x, Number(x.v ?? 0)));
+
+  const reply = db
+    .prepare(
+      `SELECT screen, display_name, avatar, (rm_s / rm_c) AS v FROM users
+       WHERE appearances>0 AND rm_c > 0 ORDER BY (rm_s / rm_c) ASC LIMIT 30`,
+    )
+    .all()
+    .map((x) => toMetricRow(x, Number(x.v ?? 0)));
+
+  const longest = db
+    .prepare(
+      `SELECT screen, display_name, avatar, mentions, (al_s / al_c) AS v FROM users
+       WHERE appearances>0 AND al_c > 0
+       ORDER BY (al_s / al_c) DESC, mentions DESC LIMIT 30`,
+    )
+    .all()
+    .map((x) => toMetricRow(x, Number(x.v ?? 0)));
+
+  const keigo = db
+    .prepare(
+      `SELECT screen, display_name, avatar, (kr_s / kr_c) AS v FROM users
+       WHERE appearances>0 AND kr_c >= 2 ORDER BY (kr_s / kr_c) DESC LIMIT 20`,
+    )
+    .all()
+    .map((x) => toMetricRow(x, Number(x.v ?? 0)));
+
+  const rising = db
+    .prepare(
+      `SELECT screen, display_name, avatar, mentions, w7 AS v FROM users
+       WHERE appearances>0 AND w7 > 0 ORDER BY w7 DESC, mentions DESC LIMIT 30`,
+    )
+    .all()
+    .map((x) => toMetricRow(x, Number(x.v ?? 0)));
 
   const today = Math.floor(Date.now() / 86_400_000);
-  const byBond = users
-    .filter((u) => typeof u.fi === "number" && u.fi !== Number.MAX_SAFE_INTEGER)
-    .sort((a, b) => (a.fi ?? 0) - (b.fi ?? 0))
-    .slice(0, 30)
-    .map((u) => metricRow(u, Math.max(0, today - (u.fi ?? today))));
+  const bond = db
+    .prepare(
+      `SELECT screen, display_name, avatar, fi AS v FROM users
+       WHERE appearances>0 AND fi IS NOT NULL ORDER BY fi ASC LIMIT 30`,
+    )
+    .all()
+    .map((x) => toMetricRow(x, Math.max(0, today - Number(x.v ?? today))));
 
-  // 日次推移と伸び（直近7日で最も古いスナップショットとの差分）
-  if (!state.daily?.[dayKey()]) captureDaily(state);
-  const days = Object.keys(state.daily ?? {}).sort();
-  const trend: StatsTrendPoint[] = days.slice(-30).map((d) => ({
-    d,
-    m: state.daily?.[d]?.m ?? 0,
-    u: state.daily?.[d]?.u ?? 0,
+  const dailyRows = db.prepare("SELECT d, m, u FROM daily ORDER BY d ASC").all() as Array<Record<string, unknown>>;
+  const trend: StatsTrendPoint[] = dailyRows.slice(-30).map((r) => ({
+    d: String(r.d),
+    m: Number(r.m ?? 0),
+    u: Number(r.u ?? 0),
   }));
-  const base = days.slice(-7)[0];
-  const baseTop = new Map<string, number>(state.daily?.[base]?.top ?? []);
-  const growth: StatsMetricRow[] = [...users]
-    .map((u) => ({ u, diff: u.mentions - (baseTop.get(u.screenName) ?? u.mentions) }))
+
+  // 伸び（直近7日で最も古いスナップショットとの差分）
+  const baseRow = dailyRows.length > 1 ? dailyRows[Math.max(0, dailyRows.length - 7)] : null;
+  let baseTop = new Map<string, number>();
+  if (baseRow) {
+    const raw = db.prepare("SELECT top FROM daily WHERE d=?").get(String(baseRow.d));
+    try {
+      const parsed = JSON.parse(String(raw?.top ?? "[]")) as Array<[string, number]>;
+      baseTop = new Map(parsed);
+    } catch {
+      baseTop = new Map();
+    }
+  }
+  const growthRows = db
+    .prepare(
+      "SELECT screen, display_name, avatar, mentions FROM users WHERE appearances>0 ORDER BY mentions DESC LIMIT 5000",
+    )
+    .all() as Array<Record<string, unknown>>;
+  const growth = growthRows
+    .map((x) => {
+      const mentions = Number(x.mentions ?? 0);
+      const before = baseTop.get(String(x.screen));
+      return { row: x, diff: before === undefined ? 0 : mentions - before };
+    })
     .filter((x) => x.diff > 0)
     .sort((a, b) => b.diff - a.diff)
     .slice(0, 20)
-    .map((x) => metricRow(x.u, x.diff));
+    .map((x) => toMetricRow(x.row, x.diff));
 
-  const recent = [...users]
-    .sort((a, b) => (b.lastActive ?? 0) - (a.lastActive ?? 0) || b.lastSeen - a.lastSeen)
-    .slice(0, 20)
-    .map((u) => toRow(u, u.appearances, u.mentions));
+  const circleCount = Number(db.prepare("SELECT COUNT(*) AS n FROM circles").get()?.n ?? 0);
+  const totals = db
+    .prepare("SELECT COALESCE(SUM(mentions),0) AS m, COUNT(*) AS u FROM users WHERE appearances>0")
+    .get();
+  const circles = (
+    db.prepare("SELECT handle, users, total, at FROM circles ORDER BY at DESC LIMIT 1000").all() as Array<
+      Record<string, unknown>
+    >
+  ).map((c) => ({
+    screenName: String(c.handle),
+    users: Number(c.users ?? 0),
+    total: Number(c.total ?? 0),
+    at: Number(c.at ?? 0),
+  }));
 
-  const circles: StatsCircleRow[] = Object.entries(state.circles)
-    .map(([screenName, c]) => ({ screenName, users: c.users, total: c.total, at: c.at }))
-    .sort((a, b) => b.at - a.at)
-    .slice(0, 1_000);
+  const hoursRow = db.prepare("SELECT h, n FROM hours").all() as Array<Record<string, unknown>>;
+  const hours = new Array(24).fill(0) as number[];
+  for (const r of hoursRow) {
+    const h = Number(r.h);
+    if (h >= 0 && h < 24) hours[h] = Math.max(0, Number(r.n ?? 0));
+  }
 
   return {
-    updatedAt: state.updatedAt,
-    circleCount: Object.keys(state.circles).length,
-    userCount: users.length,
-    totalMentions: Math.max(0, state.totalMentions),
-    builds: state.builds,
-    persist: {
-      dir: rt.persist.dir,
-      file: rt.persist.file,
-      ok: rt.persist.ok,
-      lastError: rt.persist.lastError,
-      lastWrite: rt.persist.lastWrite,
-      bytes: rt.persist.bytes,
-      lastMs: rt.persist.lastMs,
-    },
+    updatedAt: Number(getMeta(db, "updatedAt") ?? "0"),
+    circleCount,
+    userCount: Number(totals?.u ?? 0),
+    totalMentions: Math.max(0, Number(totals?.m ?? 0)),
+    builds: Number(getMeta(db, "builds") ?? "0"),
+    persist: { ...rt.persist },
     rankings: {
       appearances: byAppearances,
       mentions: byMentions,
       rank: byRank,
       recent,
-      fastest: byFastest,
-      reply: byReply,
-      longest: byLongest,
-      keigo: byKeigo,
-      rising: byRising,
-      bond: byBond,
+      fastest,
+      reply,
+      longest,
+      keigo,
+      rising,
+      bond,
       growth,
     },
     trend,
-    emojis: topEntries(state.emojis, 36),
-    laughs: topEntries(state.laughs, 8),
-    vocatives: topEntries(state.vocatives, 30),
-    hours: state.hours,
+    emojis: topAgg(rt, "emoji", 36),
+    laughs: topAgg(rt, "laugh", 8),
+    vocatives: topAgg(rt, "vocative", 30),
+    hours,
     circles,
   };
 }
@@ -814,90 +1275,124 @@ export function getStatsSnapshot(): StatsSnapshot {
  * まだ集計していないハンドルの候補（芋づる式クロールの起点）。
  * 集計済みサークルの登場人物を、何サークルに出ているかで重み付けして返す。
  */
-/** アバター解決を試した時刻（失敗の再試行間隔を空けるため） */
-const avatarTriedAt = new Map<string, number>();
+export function getStatsCandidates(limit = 200): { screenName: string; circles: number; mentions: number }[] {
+  try {
+    const rt = runtime();
+    const rows = stmt(
+      rt,
+      `SELECT p.screen AS screen, COUNT(*) AS c, SUM(p.n) AS m
+         FROM peers p
+         LEFT JOIN circles c ON c.handle = p.screen
+        WHERE c.handle IS NULL
+        GROUP BY p.screen
+        ORDER BY c DESC, m DESC
+        LIMIT ?`,
+    ).all(Math.max(1, Math.min(2000, limit))) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      screenName: String(r.screen),
+      circles: Number(r.c ?? 0),
+      mentions: Number(r.m ?? 0),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// アバター
+// ---------------------------------------------------------------------------
+
 const AVATAR_RETRY_MS = 10 * 60 * 1000;
 
 /** バックフィルの再試行間隔をリセットする（force 用） */
 export function resetAvatarAttempts(): void {
-  avatarTriedAt.clear();
+  const rt = runtime();
+  if (!rt.db) return;
+  try {
+    stmt(rt, "DELETE FROM avatar_tries").run();
+  } catch {
+    /* noop */
+  }
 }
 
 /** 解決を試みたことを記録する（失敗した相手を毎回叩かない） */
 export function noteAvatarAttempt(screenName: string): void {
-  avatarTriedAt.set(screenName.toLowerCase(), Date.now());
+  const rt = runtime();
+  if (!rt.db) return;
+  try {
+    stmt(rt, "INSERT OR REPLACE INTO avatar_tries(screen, at) VALUES(?,?)").run(
+      screenName.toLowerCase(),
+      Date.now(),
+    );
+  } catch {
+    /* noop */
+  }
 }
 
 /**
  * 解決済みのアバターURLを保存する（fxtwitter の高画質URLを想定）。
- * 保存済み・上限超過・不正URLは false。
+ * 保存済み・不正URLは false。
  */
 export function setUserAvatar(screenName: string, url: string): boolean {
   const rt = runtime();
-  const u = rt.state.users[screenName];
-  if (!u) return false;
+  if (!rt.db) return false;
   if (!isUsableAvatar(url)) return false;
-  if (isUsableAvatar(u.avatar)) return false; // 既に良いURLがある
-  const hadAny = Boolean(u.avatar);
-  void hadAny;
-  // プレースホルダ等の使えないURLが入っていた場合は差し替える（件数は増やさない）
-  u.avatar = url;
-  if (!hadAny) rt.state.avatars = (rt.state.avatars ?? 0) + 1;
-  schedulePersist(rt);
-  return true;
+  try {
+    const key = screenName.toLowerCase();
+    const cur = stmt(rt, "SELECT avatar FROM users WHERE screen=?").get(key);
+    if (!cur) return false;
+    if (isUsableAvatar(str(cur.avatar))) return false;
+    stmt(rt, "UPDATE users SET avatar=? WHERE screen=?").run(url, key);
+    schedulePersist(rt);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** アバター未取得のハンドルを登場回数の多い順に返す（バックフィル対象） */
 export function getAvatarBackfillTargets(limit = 30): string[] {
   const rt = runtime();
-  const now = Date.now();
-  const rows: Array<{ s: string; a: number }> = [];
-  for (const u of Object.values(rt.state.users)) {
-    if (isUsableAvatar(u.avatar)) continue;
-    const tried = avatarTriedAt.get(u.screenName.toLowerCase());
-    if (tried && now - tried < AVATAR_RETRY_MS) continue;
-    rows.push({ s: u.screenName, a: u.appearances });
-  }
-  rows.sort((a, b) => b.a - a.a);
-  return rows.slice(0, Math.max(1, Math.min(400, limit))).map((r) => r.s);
-}
-
-export function getStatsCandidates(
-  limit = 200,
-): { screenName: string; circles: number; mentions: number }[] {
+  if (!rt.db) return [];
   try {
-    const rt = runtime();
-    const state = rt.state;
-    const acc = new Map<string, { circles: number; mentions: number }>();
-    for (const contrib of Object.values(state.circles)) {
-      for (const [screen, peer] of Object.entries(contrib.peers)) {
-        if (state.circles[screen]) continue; // 集計済みは除外
-        const row = acc.get(screen);
-        if (row) {
-          row.circles += 1;
-          row.mentions += peer.n;
-        } else {
-          acc.set(screen, { circles: 1, mentions: peer.n });
-        }
-      }
-    }
-    return [...acc.entries()]
-      .map(([screenName, v]) => ({ screenName, ...v }))
-      .sort((a, b) => b.circles - a.circles || b.mentions - a.mentions)
-      .slice(0, Math.max(1, Math.min(2000, limit)));
+    const since = Date.now() - AVATAR_RETRY_MS;
+    const rows = stmt(
+      rt,
+      `SELECT u.screen AS screen FROM users u
+         LEFT JOIN avatar_tries a ON a.screen = u.screen
+        WHERE u.appearances > 0
+          AND (u.avatar IS NULL OR u.avatar = '')
+          AND (a.at IS NULL OR a.at < ?)
+        ORDER BY u.appearances DESC, u.mentions DESC
+        LIMIT ?`,
+    ).all(since, Math.max(1, Math.min(400, limit))) as Array<Record<string, unknown>>;
+    return rows.map((r) => String(r.screen));
   } catch {
     return [];
   }
 }
 
 /** 計測用（デバッグ・検証スクリプト向け） */
-export function getStatsMeta(): { circles: number; users: number; avatars: number; pruned: number; persist: PersistInfo } {
+export function getStatsMeta(): {
+  circles: number;
+  users: number;
+  avatars: number;
+  pruned: number;
+  persist: PersistInfo;
+} {
   const rt = runtime();
+  if (!rt.db) {
+    return { circles: 0, users: 0, avatars: 0, pruned: 0, persist: { ...rt.persist } };
+  }
+  const c = rt.db.prepare("SELECT COUNT(*) AS n FROM circles").get();
+  const u = rt.db.prepare("SELECT COUNT(*) AS n FROM users").get();
+  const a = rt.db.prepare("SELECT COUNT(*) AS n FROM users WHERE avatar IS NOT NULL AND avatar <> ''").get();
   return {
-    circles: Object.keys(rt.state.circles).length,
-    users: Object.keys(rt.state.users).length,
-    avatars: rt.state.avatars ?? 0,
-    pruned: rt.state.pruned ?? 0,
+    circles: Number(c?.n ?? 0),
+    users: Number(u?.n ?? 0),
+    avatars: Number(a?.n ?? 0),
+    // 件数上限は撤廃したので常に 0（旧 API 互換）
+    pruned: 0,
     persist: { ...rt.persist },
   };
 }
