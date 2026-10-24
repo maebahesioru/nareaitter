@@ -26,6 +26,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 COPY --chown=nextjs:nodejs docker-signal-entry.cjs ./
 
+# 統計データの永続化先（Coolify の persistent storage を /app/data にマウントする想定）
+RUN mkdir -p /app/data && chown nextjs:nodejs /app/data
+
 USER nextjs
 EXPOSE 3000
 ENV PORT 3000
