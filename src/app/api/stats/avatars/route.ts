@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { backfillStatsAvatars } from "@/lib/stats-avatar-backfill";
-import { getStatsMeta } from "@/lib/stats-store";
+import { getStatsMeta, resetAvatarAttempts } from "@/lib/stats-store";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -25,6 +25,7 @@ export async function GET(req: NextRequest) {
     );
   }
   gate.at = now;
+  if (force) resetAvatarAttempts();
   const saved = await backfillStatsAvatars(limit, 300);
   return NextResponse.json(
     { ok: true, limit, saved, meta: getStatsMeta() },

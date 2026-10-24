@@ -567,6 +567,11 @@ export function getStatsSnapshot(): StatsSnapshot {
 const avatarTriedAt = new Map<string, number>();
 const AVATAR_RETRY_MS = 10 * 60 * 1000;
 
+/** バックフィルの再試行間隔をリセットする（force 用） */
+export function resetAvatarAttempts(): void {
+  avatarTriedAt.clear();
+}
+
 /** 解決を試みたことを記録する（失敗した相手を毎回叩かない） */
 export function noteAvatarAttempt(screenName: string): void {
   avatarTriedAt.set(screenName.toLowerCase(), Date.now());
