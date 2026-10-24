@@ -20,7 +20,7 @@ import {
 const inflight = new Set<string>();
 let running = false;
 
-export async function backfillStatsAvatars(limit = 30): Promise<number> {
+export async function backfillStatsAvatars(limit = 30, gapMs = 250): Promise<number> {
   if (running) return 0;
   running = true;
   let saved = 0;
@@ -35,6 +35,7 @@ export async function backfillStatsAvatars(limit = 30): Promise<number> {
         const key = screen.toLowerCase();
         if (inflight.has(key)) continue;
         inflight.add(key);
+        if (gapMs > 0) await new Promise((r) => setTimeout(r, gapMs));
         try {
           const hd = await resolveCircleAvatarUrl(screen);
           if (hd && setUserAvatar(screen, hd)) saved += 1;
@@ -46,7 +47,7 @@ export async function backfillStatsAvatars(limit = 30): Promise<number> {
         }
       }
     };
-    await Promise.all([worker(), worker(), worker()]);
+    await Promise.all([worker(), worker()]);
   } finally {
     running = false;
   }

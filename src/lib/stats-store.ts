@@ -565,7 +565,7 @@ export function getStatsSnapshot(): StatsSnapshot {
  */
 /** アバター解決を試した時刻（失敗の再試行間隔を空けるため） */
 const avatarTriedAt = new Map<string, number>();
-const AVATAR_RETRY_MS = 6 * 60 * 60 * 1000;
+const AVATAR_RETRY_MS = 10 * 60 * 1000;
 
 /** 解決を試みたことを記録する（失敗した相手を毎回叩かない） */
 export function noteAvatarAttempt(screenName: string): void {
