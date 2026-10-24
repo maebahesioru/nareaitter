@@ -697,6 +697,26 @@ export function StatsApp() {
                 />
               </SectionCard>
 
+              <SectionCard title={t.statsFastestMeTitle} hint={t.statsFastestMeHint}>
+                <MetricList
+                  rows={data.rankings.fastestMe.slice(0, 10)}
+                  hrefBase={hrefBase}
+                  format={(v) => v.toFixed(0)}
+                  unit={t.statsUnitSec}
+                  max={data.rankings.fastestMe[0]?.value ?? 1}
+                />
+              </SectionCard>
+
+              <SectionCard title={t.statsReplyMeTitle} hint={t.statsReplyMeHint}>
+                <MetricList
+                  rows={data.rankings.replyMe.slice(0, 10)}
+                  hrefBase={hrefBase}
+                  format={(v) => v.toFixed(1)}
+                  unit={t.statsUnitMin}
+                  max={data.rankings.replyMe[0]?.value ?? 1}
+                />
+              </SectionCard>
+
               <SectionCard title={t.statsLongestTitle} hint={t.statsLongestHint}>
                 <MetricList
                   rows={data.rankings.longest.slice(0, 10)}
@@ -745,6 +765,63 @@ export function StatsApp() {
                   unit={t.statsUnitTimes}
                   max={data.rankings.growth[0]?.value ?? 1}
                 />
+              </SectionCard>
+
+              <SectionCard title={t.statsOwnerTitle} hint={t.statsOwnerHint} className="lg:col-span-2">
+                <div className="grid gap-5 sm:grid-cols-2">
+                  <div>
+                    <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                      {t.statsOwnerLongest}
+                    </h3>
+                    <MetricList
+                      rows={data.owners.longest.map((o) => ({
+                        screenName: o.screenName,
+                        displayName: o.displayName,
+                        value: o.avgLen ?? 0,
+                      }))}
+                      hrefBase={hrefBase}
+                      format={(v) => (v >= 80 ? `${v.toFixed(0)}+` : v.toFixed(0))}
+                      unit={t.statsUnitChars}
+                      max={data.owners.longest[0]?.avgLen ?? 1}
+                    />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                      {t.statsOwnerKeigo}
+                    </h3>
+                    <MetricList
+                      rows={data.owners.keigo.map((o) => ({
+                        screenName: o.screenName,
+                        displayName: o.displayName,
+                        value: o.keigo ?? 0,
+                      }))}
+                      hrefBase={hrefBase}
+                      format={(v) => v.toFixed(0)}
+                      unit={t.statsUnitPercent}
+                      max={100}
+                    />
+                  </div>
+                </div>
+                <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                      {t.statsOwnerEmojis}
+                    </h3>
+                    <Chips items={data.owners.emojis} emoji />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                      {t.statsOwnerWords}
+                    </h3>
+                    <Chips items={data.owners.words} />
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                    {t.statsOwnerLaughs}
+                  </h3>
+                  <Chips items={data.owners.laughs} />
+                </div>
               </SectionCard>
 
               <SectionCard

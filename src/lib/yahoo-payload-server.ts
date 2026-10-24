@@ -458,7 +458,18 @@ export async function buildYahooPayload(
     );
     payload.circleUsers = circleUsers;
     // サイト全体の統計ストアへ集計（失敗してもペイロード生成は続行する）
-    recordCircleStats(name, circleUsers);
+    const ownStyle = payload.selfStyle as
+      | { avgLen?: number; keigoRate?: number; streakDays?: number; laugh?: string }
+      | undefined;
+    recordCircleStats(name, circleUsers, {
+      avgLen: ownStyle?.avgLen,
+      keigoRate: ownStyle?.keigoRate,
+      streakDays: ownStyle?.streakDays,
+      laugh: ownStyle?.laugh,
+      emojis: payload.selfEmojis as string[] | undefined,
+      vocatives: payload.selfVocatives as string[] | undefined,
+      words: payload.communityWords as string[] | undefined,
+    });
     // 界隈の出入り（直近14日）
     const nowMs = Date.now();
     const d14 = 14 * 86400 * 1000;

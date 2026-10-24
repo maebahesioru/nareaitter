@@ -138,6 +138,17 @@ export type Messages = {
   statsFastestHint: string;
   statsReplyTitle: string;
   statsReplyHint: string;
+  statsFastestMeTitle: string;
+  statsFastestMeHint: string;
+  statsReplyMeTitle: string;
+  statsReplyMeHint: string;
+  statsOwnerTitle: string;
+  statsOwnerHint: string;
+  statsOwnerLongest: string;
+  statsOwnerKeigo: string;
+  statsOwnerEmojis: string;
+  statsOwnerWords: string;
+  statsOwnerLaughs: string;
   statsLongestTitle: string;
   statsLongestHint: string;
   statsKeigoTitle: string;
@@ -355,6 +366,17 @@ export const messages: Record<Locale, Messages> = {
     statsFastestHint: "相手→あなたの最速レス（記録した中で最短）。",
     statsReplyTitle: "返信が速い人（中央値）",
     statsReplyHint: "相手→あなたの返信速度の中央値を平均したもの。",
+    statsFastestMeTitle: "あなたが最速で返した相手",
+    statsFastestMeHint: "あなた→相手の最速レス（記録した中で最短）。",
+    statsReplyMeTitle: "あなたが返すのが速い相手（中央値）",
+    statsReplyMeHint: "あなた→相手の返信速度の中央値を平均したもの。",
+    statsOwnerTitle: "サークル主たちの傾向",
+    statsOwnerHint: "サークルを作った人自身の喋り方をまとめたもの。",
+    statsOwnerLongest: "サークル主の平均文字数",
+    statsOwnerKeigo: "サークル主の敬語率",
+    statsOwnerEmojis: "サークル主がよく使う絵文字",
+    statsOwnerWords: "界隈でよく出る言葉",
+    statsOwnerLaughs: "サークル主の笑い方",
     statsLongestTitle: "長文の人",
     statsLongestHint: "相手のメンションの平均文字数。取得時に80文字で切っているため「81+」は頭打ち（同点は交流数順）。",
     statsKeigoTitle: "敬語の人",
@@ -574,6 +596,17 @@ export const messages: Record<Locale, Messages> = {
     statsFastestHint: "Their quickest reply to you, among recorded circles.",
     statsReplyTitle: "Fastest responders (median)",
     statsReplyHint: "Average of the median reply time from them to you.",
+    statsFastestMeTitle: "People you reply to fastest",
+    statsFastestMeHint: "Your fastest reply per person (shortest recorded).",
+    statsReplyMeTitle: "People you reply to fastest (median)",
+    statsReplyMeHint: "Average of your median reply time to each person.",
+    statsOwnerTitle: "How circle owners talk",
+    statsOwnerHint: "Writing style of the people who built the circles.",
+    statsOwnerLongest: "Owners by average length",
+    statsOwnerKeigo: "Owners by keigo rate",
+    statsOwnerEmojis: "Emojis owners use most",
+    statsOwnerWords: "Words that keep showing up",
+    statsOwnerLaughs: "How owners laugh",
     statsLongestTitle: "Longest messages",
     statsLongestHint: "Average characters per mention from them. Text is cut at 80 chars upstream, so \"81+\" means capped (ties ordered by interactions).",
     statsKeigoTitle: "Most polite",

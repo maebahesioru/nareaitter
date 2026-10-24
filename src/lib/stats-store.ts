@@ -108,6 +108,45 @@ function num(v: unknown, fallback = 0): number {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
 }
 
+/** 空文字は NULL 扱い（SQLite の COALESCE で「未設定」を保つため） */
+function tidyName(v: string | undefined | null): string | null {
+  const t = (v ?? "").trim();
+  return t ? t.slice(0, 80) : null;
+}
+
+/** しきい値未満・非数値は NULL */
+function numOrNull(v: number | undefined, min: number): number | null {
+  return typeof v === "number" && Number.isFinite(v) && v >= min ? v : null;
+}
+
+/** 文字列配列を JSON で1列に（長すぎるものは捨てる） */
+function jsonList(v: string[] | undefined): string | null {
+  if (!Array.isArray(v)) return null;
+  const items = v.map((x) => (x ?? "").trim()).filter((x) => x.length > 0 && x.length <= 32);
+  if (items.length === 0) return null;
+  return JSON.stringify(items.slice(0, 12));
+}
+
+function parseList(v: unknown): string[] {
+  if (typeof v !== "string" || !v) return [];
+  try {
+    const arr = JSON.parse(v);
+    return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 配列を「値→件数」で数えて上位を返す */
+function countList(values: string[], limit: number): Array<{ key: string; n: number }> {
+  const m = new Map<string, number>();
+  for (const v of values) m.set(v, (m.get(v) ?? 0) + 1);
+  return [...m.entries()]
+    .map(([key, n]) => ({ key, n }))
+    .sort((a, b) => b.n - a.n || a.key.localeCompare(b.key))
+    .slice(0, limit);
+}
+
 function optNum(v: number | undefined): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
@@ -143,12 +182,28 @@ CREATE TABLE IF NOT EXISTS peers (
   l  INTEGER,
   rm REAL,
   fs INTEGER,
+  rmm REAL,
+  fsm INTEGER,
   al REAL,
   kr REAL,
   w7 INTEGER,
   wk0 INTEGER, wk1 INTEGER, wk2 INTEGER, wk3 INTEGER,
   fi INTEGER,
   PRIMARY KEY (circle, screen)
+) WITHOUT ROWID;
+
+-- サークル主（そのサークルの持ち主）自身の傾向。1ハンドル1行なので差分管理は不要。
+CREATE TABLE IF NOT EXISTS owner (
+  handle TEXT PRIMARY KEY,
+  display TEXT,
+  avg_len REAL,
+  keigo REAL,
+  streak INTEGER,
+  laugh TEXT,
+  emojis TEXT,
+  vocatives TEXT,
+  words TEXT,
+  at INTEGER NOT NULL
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS users (
@@ -166,6 +221,7 @@ CREATE TABLE IF NOT EXISTS users (
   last_seen INTEGER NOT NULL DEFAULT 0,
   last_active INTEGER,
   rm_s REAL NOT NULL DEFAULT 0, rm_c INTEGER NOT NULL DEFAULT 0,
+  rmm_s REAL NOT NULL DEFAULT 0, rmm_c INTEGER NOT NULL DEFAULT 0, fsm INTEGER,
   al_s REAL NOT NULL DEFAULT 0, al_c INTEGER NOT NULL DEFAULT 0,
   kr_s REAL NOT NULL DEFAULT 0, kr_c INTEGER NOT NULL DEFAULT 0,
   w7 INTEGER NOT NULL DEFAULT 0,
@@ -459,10 +515,31 @@ function getMeta(db: DatabaseSync, key: string): string | null {
   return row ? String(row.v) : null;
 }
 
+/** 既存 DB に後から足した列を補う（WITHOUT ROWID でも ADD COLUMN は可）。 */
+function ensureColumns(db: DatabaseSync): void {
+  const want: Array<[string, string, string]> = [
+    ["peers", "rmm", "REAL"],
+    ["peers", "fsm", "INTEGER"],
+    ["users", "rmm_s", "REAL NOT NULL DEFAULT 0"],
+    ["users", "rmm_c", "INTEGER NOT NULL DEFAULT 0"],
+    ["users", "fsm", "INTEGER"],
+  ];
+  for (const [table, col, type] of want) {
+    try {
+      const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
+      if (cols.some((c) => c.name === col)) continue;
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+    } catch {
+      // 旧 DB の列追加に失敗しても既存機能は動かす
+    }
+  }
+}
+
 function openDb(rt: Runtime): DatabaseSync {
   fs.mkdirSync(rt.dir, { recursive: true });
   const db = new DatabaseSync(rt.file);
   db.exec(SCHEMA);
+  ensureColumns(db);
   if (!rt.migrated) {
     rt.migrated = true;
     const hasCircles = db.prepare("SELECT COUNT(*) AS n FROM circles").get();
@@ -622,6 +699,10 @@ export type StatsPeerInput = {
   replyThemMin?: number;
   /** 最速レス（秒） */
   fastestThemSec?: number;
+  /** 本人→相手の返信速度（中央値・分） */
+  replyMeMin?: number;
+  /** 本人→相手の最速レス（秒） */
+  fastestMeSec?: number;
   /** 平均文字数 */
   avgLen?: number;
   /** 敬語率 0-100 */
@@ -634,6 +715,18 @@ export type StatsPeerInput = {
   firstInteractionAt?: string;
 };
 
+/** サークル主（持ち主）自身の傾向。毎回上書きするので差分管理は不要。 */
+export type StatsSelfInput = {
+  displayName?: string;
+  avgLen?: number;
+  keigoRate?: number;
+  streakDays?: number;
+  laugh?: string;
+  emojis?: string[];
+  vocatives?: string[];
+  words?: string[];
+};
+
 type PeerRow = {
   screen: string;
   n: number;
@@ -644,6 +737,8 @@ type PeerRow = {
   l: number | null;
   rm: number | null;
   fs: number | null;
+  rmm: number | null;
+  fsm: number | null;
   al: number | null;
   kr: number | null;
   w7: number | null;
@@ -662,6 +757,7 @@ const SUB_PEER = `
     rm_s = MAX(0, rm_s - ?), rm_c = MAX(0, rm_c - ?),
     al_s = MAX(0, al_s - ?), al_c = MAX(0, al_c - ?),
     kr_s = MAX(0, kr_s - ?), kr_c = MAX(0, kr_c - ?),
+    rmm_s = MAX(0, rmm_s - ?), rmm_c = MAX(0, rmm_c - ?),
     w7 = MAX(0, w7 - ?),
     wk0 = MAX(0, wk0 - ?), wk1 = MAX(0, wk1 - ?),
     wk2 = MAX(0, wk2 - ?), wk3 = MAX(0, wk3 - ?)
@@ -671,8 +767,9 @@ const UPSERT_PEER = `
   INSERT INTO users(
     screen, display_name, avatar, appearances, mentions, received, sent,
     rank_sum, ranked_circles, best_rank, first_seen, last_seen, last_active,
-    rm_s, rm_c, al_s, al_c, kr_s, kr_c, w7, wk0, wk1, wk2, wk3, fst, fi
-  ) VALUES(?,?,?,1,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    rm_s, rm_c, al_s, al_c, kr_s, kr_c, w7, wk0, wk1, wk2, wk3, fst, fi,
+    rmm_s, rmm_c, fsm
+  ) VALUES(?,?,?,1,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   ON CONFLICT(screen) DO UPDATE SET
     display_name = COALESCE(users.display_name, excluded.display_name),
     avatar = CASE
@@ -706,7 +803,12 @@ const UPSERT_PEER = `
       ELSE MIN(COALESCE(users.fst, 2147483647), excluded.fst) END,
     fi = CASE
       WHEN excluded.fi IS NULL THEN users.fi
-      ELSE MIN(COALESCE(users.fi, 2147483647), excluded.fi) END`;
+      ELSE MIN(COALESCE(users.fi, 2147483647), excluded.fi) END,
+    rmm_s = users.rmm_s + excluded.rmm_s,
+    rmm_c = users.rmm_c + excluded.rmm_c,
+    fsm = CASE
+      WHEN excluded.fsm IS NULL THEN users.fsm
+      ELSE MIN(COALESCE(users.fsm, 2147483647), excluded.fsm) END`;
 
 function bumpAgg(rt: Runtime, kind: string, key: string, delta: number): void {
   stmt(
@@ -771,6 +873,9 @@ function applyPeers(
         wk3,
         p.fs,
         p.fi,
+        p.rmm ?? 0,
+        p.rmm === null ? 0 : 1,
+        p.fsm,
       );
     } else if (sub) {
       sub.run(
@@ -784,6 +889,8 @@ function applyPeers(
         alC,
         p.kr ?? 0,
         krC,
+        p.rmm ?? 0,
+        p.rmm === null ? 0 : 1,
         p.w7 ?? 0,
         wk0,
         wk1,
@@ -804,7 +911,7 @@ function dropCircle(rt: Runtime, handle: string): boolean {
   if (!circle) return false;
   const peerRows = stmt(
     rt,
-    `SELECT screen, n, r, s, k, h, l, rm, fs, al, kr, w7, wk0, wk1, wk2, wk3, fi
+    `SELECT screen, n, r, s, k, h, l, rm, fs, rmm, fsm, al, kr, w7, wk0, wk1, wk2, wk3, fi
      FROM peers WHERE circle=?`,
   ).all(handle) as Array<Record<string, unknown>>;
   const rows: PeerRow[] = peerRows.map((x) => ({
@@ -817,6 +924,8 @@ function dropCircle(rt: Runtime, handle: string): boolean {
     l: x.l === null ? null : Number(x.l),
     rm: x.rm === null ? null : Number(x.rm),
     fs: x.fs === null ? null : Number(x.fs),
+    rmm: x.rmm === null ? null : Number(x.rmm),
+    fsm: x.fsm === null ? null : Number(x.fsm),
     al: x.al === null ? null : Number(x.al),
     kr: x.kr === null ? null : Number(x.kr),
     w7: x.w7 === null ? null : Number(x.w7),
@@ -846,7 +955,7 @@ function dropCircle(rt: Runtime, handle: string): boolean {
  * 1サークルぶんの集計を記録する。
  * peers は交流回数の降順で渡ってくる前提（payload 側でソート済み）。
  */
-export function recordCircleStats(handle: string, peers: StatsPeerInput[]): void {
+export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?: StatsSelfInput): void {
   try {
     if (!handle || !Array.isArray(peers) || peers.length === 0) return;
     const rt = runtime();
@@ -883,6 +992,8 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[]): void
         l: toDayNum(p.lastInteractionAt) ?? null,
         rm: typeof p.replyThemMin === "number" && p.replyThemMin >= 0 ? p.replyThemMin : null,
         fs: typeof p.fastestThemSec === "number" && p.fastestThemSec > 0 ? p.fastestThemSec : null,
+        rmm: typeof p.replyMeMin === "number" && p.replyMeMin >= 0 ? p.replyMeMin : null,
+        fsm: typeof p.fastestMeSec === "number" && p.fastestMeSec > 0 ? p.fastestMeSec : null,
         al: typeof p.avgLen === "number" && p.avgLen > 0 ? p.avgLen : null,
         kr: typeof p.keigoRate === "number" && p.keigoRate >= 0 ? p.keigoRate : null,
         w7: typeof p.mentionsLast7d === "number" ? p.mentionsLast7d : null,
@@ -921,8 +1032,8 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[]): void
     const insertPeer = stmt(
       rt,
       `INSERT INTO peers(
-         circle, screen, n, r, s, k, h, l, rm, fs, al, kr, w7, wk0, wk1, wk2, wk3, fi
-       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         circle, screen, n, r, s, k, h, l, rm, fs, rmm, fsm, al, kr, w7, wk0, wk1, wk2, wk3, fi
+       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     );
     for (const p of rows) {
       insertPeer.run(
@@ -936,6 +1047,8 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[]): void
         p.l,
         p.rm,
         p.fs,
+        p.rmm,
+        p.fsm,
         p.al,
         p.kr,
         p.w7,
@@ -954,6 +1067,35 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[]): void
         insertCircleAgg.run(key, kind, k, n);
         bumpAgg(rt, kind, k, n);
       }
+    }
+
+    if (self) {
+      stmt(
+        rt,
+        `INSERT INTO owner(handle, display, avg_len, keigo, streak, laugh, emojis, vocatives, words, at)
+         VALUES(?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(handle) DO UPDATE SET
+           display = COALESCE(excluded.display, owner.display),
+           avg_len = COALESCE(excluded.avg_len, owner.avg_len),
+           keigo = COALESCE(excluded.keigo, owner.keigo),
+           streak = COALESCE(excluded.streak, owner.streak),
+           laugh = COALESCE(excluded.laugh, owner.laugh),
+           emojis = COALESCE(excluded.emojis, owner.emojis),
+           vocatives = COALESCE(excluded.vocatives, owner.vocatives),
+           words = COALESCE(excluded.words, owner.words),
+           at = excluded.at`,
+      ).run(
+        key,
+        tidyName(self.displayName),
+        numOrNull(self.avgLen, 0),
+        numOrNull(self.keigoRate, 0),
+        numOrNull(self.streakDays, -1),
+        tidyName(self.laugh),
+        jsonList(self.emojis),
+        jsonList(self.vocatives),
+        jsonList(self.words),
+        now,
+      );
     }
 
     setMeta(rt.db, "updatedAt", String(now));
@@ -1008,6 +1150,27 @@ export type StatsCircleRow = {
   at: number;
 };
 
+/** サークル主（持ち主）自身の傾向1行 */
+export type StatsOwnerRow = {
+  screenName: string;
+  displayName?: string;
+  avgLen?: number;
+  keigo?: number;
+  streak?: number;
+  laugh?: string;
+  emojis: string[];
+};
+
+export type StatsOwnerBoard = {
+  count: number;
+  longest: StatsOwnerRow[];
+  keigo: StatsOwnerRow[];
+  laughs: Array<{ key: string; n: number }>;
+  emojis: Array<{ key: string; n: number }>;
+  vocatives: Array<{ key: string; n: number }>;
+  words: Array<{ key: string; n: number }>;
+};
+
 export type StatsSnapshot = {
   updatedAt: number;
   circleCount: number;
@@ -1022,6 +1185,8 @@ export type StatsSnapshot = {
     recent: StatsRankRow[];
     fastest: StatsMetricRow[];
     reply: StatsMetricRow[];
+    fastestMe: StatsMetricRow[];
+    replyMe: StatsMetricRow[];
     longest: StatsMetricRow[];
     keigo: StatsMetricRow[];
     rising: StatsMetricRow[];
@@ -1034,6 +1199,7 @@ export type StatsSnapshot = {
   vocatives: Array<{ key: string; n: number }>;
   hours: number[];
   circles: StatsCircleRow[];
+  owners: StatsOwnerBoard;
 };
 
 const RANK_COLS = `screen, display_name, avatar, appearances, mentions, received, sent,
@@ -1091,6 +1257,8 @@ export function getStatsSnapshot(): StatsSnapshot {
         recent: [],
         fastest: [],
         reply: [],
+        fastestMe: [],
+        replyMe: [],
         longest: [],
         keigo: [],
         rising: [],
@@ -1103,6 +1271,7 @@ export function getStatsSnapshot(): StatsSnapshot {
       vocatives: [],
       hours: new Array(24).fill(0) as number[],
       circles: [],
+      owners: EMPTY_OWNER_BOARD(),
     };
   }
 
@@ -1147,6 +1316,23 @@ export function getStatsSnapshot(): StatsSnapshot {
     .prepare(
       `SELECT screen, display_name, avatar, (rm_s / rm_c) AS v FROM users
        WHERE appearances>0 AND rm_c > 0 ORDER BY (rm_s / rm_c) ASC LIMIT 30`,
+    )
+    .all()
+    .map((x) => toMetricRow(x, Number(x.v ?? 0)));
+
+  const fastestMe = db
+    .prepare(
+      `SELECT screen, display_name, avatar, fsm AS v FROM users
+       WHERE appearances>0 AND fsm IS NOT NULL AND fsm > 0
+       ORDER BY fsm ASC LIMIT 30`,
+    )
+    .all()
+    .map((x) => toMetricRow(x, Number(x.v ?? 0)));
+
+  const replyMe = db
+    .prepare(
+      `SELECT screen, display_name, avatar, (rmm_s / rmm_c) AS v FROM users
+       WHERE appearances>0 AND rmm_c > 0 ORDER BY (rmm_s / rmm_c) ASC LIMIT 30`,
     )
     .all()
     .map((x) => toMetricRow(x, Number(x.v ?? 0)));
@@ -1256,6 +1442,8 @@ export function getStatsSnapshot(): StatsSnapshot {
       recent,
       fastest,
       reply,
+      fastestMe,
+      replyMe,
       longest,
       keigo,
       rising,
@@ -1268,7 +1456,51 @@ export function getStatsSnapshot(): StatsSnapshot {
     vocatives: topAgg(rt, "vocative", 30),
     hours,
     circles,
+    owners: ownerBoard(db),
   };
+}
+
+function EMPTY_OWNER_BOARD(): StatsOwnerBoard {
+  return { count: 0, longest: [], keigo: [], laughs: [], emojis: [], vocatives: [], words: [] };
+}
+
+/** サークル主たちの傾向（1ハンドル1行なのでスキャンで十分） */
+function ownerBoard(db: DatabaseSync): StatsOwnerBoard {
+  try {
+    const rows = db
+      .prepare("SELECT handle, display, avg_len, keigo, streak, laugh, emojis, vocatives, words FROM owner")
+      .all() as Array<Record<string, unknown>>;
+    if (rows.length === 0) return EMPTY_OWNER_BOARD();
+    const toRow = (r: Record<string, unknown>): StatsOwnerRow => ({
+      screenName: String(r.handle ?? ""),
+      displayName: (r.display as string | null) ?? undefined,
+      avgLen: r.avg_len === null ? undefined : Number(r.avg_len),
+      keigo: r.keigo === null ? undefined : Number(r.keigo),
+      streak: r.streak === null ? undefined : Number(r.streak),
+      laugh: (r.laugh as string | null) ?? undefined,
+      emojis: parseList(r.emojis),
+    });
+    const pick = (key: "avg_len" | "keigo", limit: number): StatsOwnerRow[] =>
+      rows
+        .filter((r) => r[key] !== null && Number(r[key]) > 0)
+        .sort((a, b) => Number(b[key]) - Number(a[key]))
+        .slice(0, limit)
+        .map(toRow);
+    return {
+      count: rows.length,
+      longest: pick("avg_len", 10),
+      keigo: pick("keigo", 10),
+      laughs: countList(
+        rows.map((r) => (r.laugh as string | null) ?? "").filter(Boolean),
+        8,
+      ),
+      emojis: countList(rows.flatMap((r) => parseList(r.emojis)), 24),
+      vocatives: countList(rows.flatMap((r) => parseList(r.vocatives)), 20),
+      words: countList(rows.flatMap((r) => parseList(r.words)), 24),
+    };
+  } catch {
+    return EMPTY_OWNER_BOARD();
+  }
 }
 
 /**
