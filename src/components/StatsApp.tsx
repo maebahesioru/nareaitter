@@ -6,11 +6,11 @@ import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useLocale } from "@/components/LocaleProvider";
 import { proxiedImageSrc } from "@/lib/proxied-image-src";
-import type { StatsRankRow, StatsSnapshot } from "@/lib/stats-store";
+import type { StatsMetricRow, StatsRankRow, StatsSnapshot } from "@/lib/stats-store";
 
 type LoadState = "loading" | "ready" | "error";
 
-function Avatar({ row }: { row: StatsRankRow }) {
+function Avatar({ row }: { row: { screenName: string; displayName?: string; avatar?: string } }) {
   const [stage, setStage] = useState(0);
   const initial = (row.screenName || "?").slice(0, 1).toUpperCase();
   // 1) 保存済みアバター 2) 遅延解決（/api/avatar-fallback が fxtwitter から現物を取る） 3) 頭文字
@@ -131,6 +131,83 @@ function RankList({
         );
       })}
     </ol>
+  );
+}
+
+function MetricList({
+  rows,
+  hrefBase,
+  format,
+  unit,
+  max,
+}: {
+  rows: StatsMetricRow[];
+  hrefBase: string;
+  format: (v: number) => string;
+  unit: string;
+  max: number;
+}) {
+  if (rows.length === 0) {
+    return <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">—</p>;
+  }
+  return (
+    <ol className="mt-3 space-y-0.5">
+      {rows.map((row, i) => (
+        <li
+          key={`${row.screenName}-${i}`}
+          className="flex items-center gap-2.5 rounded-xl px-1.5 py-1.5 transition hover:bg-zinc-100/80 dark:hover:bg-white/5"
+        >
+          <span className="w-4 shrink-0 text-right text-[11px] font-semibold tabular-nums text-zinc-400 dark:text-zinc-500">
+            {i + 1}
+          </span>
+          <Avatar row={{ screenName: row.screenName, displayName: row.displayName, avatar: row.avatar }} />
+          <div className="min-w-0 flex-1">
+            <AppLink
+              href={`${hrefBase}${encodeURIComponent(row.screenName)}`}
+              className="block truncate text-sm font-semibold text-zinc-900 hover:underline dark:text-zinc-50"
+            >
+              {row.displayName?.trim() || row.screenName}
+            </AppLink>
+            <div className="mt-1 h-1 overflow-hidden rounded-full bg-zinc-200/80 dark:bg-white/10">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-violet-400 via-sky-400 to-emerald-400"
+                style={{ width: `${Math.max(3, Math.min(100, (row.value / (max || 1)) * 100))}%` }}
+              />
+            </div>
+          </div>
+          <div className="shrink-0 text-right text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-50">
+            {format(row.value)}
+            <span className="ml-0.5 text-[10px] font-normal text-zinc-500 dark:text-zinc-400">{unit}</span>
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function TrendStrip({ points, unitLabel }: { points: Array<{ d: string; m: number; u: number }>; unitLabel: string }) {
+  if (points.length < 2) {
+    return <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">—</p>;
+  }
+  const max = Math.max(...points.map((p) => p.m), 1);
+  return (
+    <div className="mt-3">
+      <div className="flex h-24 items-end gap-1">
+        {points.map((p) => (
+          <div key={p.d} className="group relative flex-1">
+            <div
+              className="w-full rounded-t bg-gradient-to-t from-sky-500/70 to-emerald-400/80"
+              style={{ height: `${Math.max(3, (p.m / max) * 96)}px` }}
+              title={`${p.d}: ${p.m} ${unitLabel} / ${p.u}`}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="mt-1 flex justify-between text-[10px] text-zinc-500 dark:text-zinc-400">
+        <span>{points[0].d}</span>
+        <span>{points[points.length - 1].d}</span>
+      </div>
+    </div>
   );
 }
 
@@ -590,6 +667,84 @@ export function StatsApp() {
                     </li>
                   ))}
                 </ul>
+              </SectionCard>
+
+              <SectionCard
+                title={t.statsTrendTitle}
+                hint={t.statsTrendHint}
+                className="lg:col-span-2"
+              >
+                <TrendStrip points={data.trend} unitLabel={t.statsColMentions} />
+              </SectionCard>
+
+              <SectionCard title={t.statsFastestTitle} hint={t.statsFastestHint}>
+                <MetricList
+                  rows={data.rankings.fastest.slice(0, 10)}
+                  hrefBase={hrefBase}
+                  format={(v) => v.toFixed(0)}
+                  unit={t.statsUnitSec}
+                  max={data.rankings.fastest[0]?.value ?? 1}
+                />
+              </SectionCard>
+
+              <SectionCard title={t.statsReplyTitle} hint={t.statsReplyHint}>
+                <MetricList
+                  rows={data.rankings.reply.slice(0, 10)}
+                  hrefBase={hrefBase}
+                  format={(v) => v.toFixed(1)}
+                  unit={t.statsUnitMin}
+                  max={data.rankings.reply[0]?.value ?? 1}
+                />
+              </SectionCard>
+
+              <SectionCard title={t.statsLongestTitle} hint={t.statsLongestHint}>
+                <MetricList
+                  rows={data.rankings.longest.slice(0, 10)}
+                  hrefBase={hrefBase}
+                  format={(v) => v.toFixed(0)}
+                  unit={t.statsUnitChars}
+                  max={data.rankings.longest[0]?.value ?? 1}
+                />
+              </SectionCard>
+
+              <SectionCard title={t.statsKeigoTitle} hint={t.statsKeigoHint}>
+                <MetricList
+                  rows={data.rankings.keigo.slice(0, 10)}
+                  hrefBase={hrefBase}
+                  format={(v) => v.toFixed(0)}
+                  unit={t.statsUnitPercent}
+                  max={data.rankings.keigo[0]?.value ?? 1}
+                />
+              </SectionCard>
+
+              <SectionCard title={t.statsRisingTitle} hint={t.statsRisingHint}>
+                <MetricList
+                  rows={data.rankings.rising.slice(0, 10)}
+                  hrefBase={hrefBase}
+                  format={(v) => v.toFixed(0)}
+                  unit={t.statsUnitTimes}
+                  max={data.rankings.rising[0]?.value ?? 1}
+                />
+              </SectionCard>
+
+              <SectionCard title={t.statsBondTitle} hint={t.statsBondHint}>
+                <MetricList
+                  rows={data.rankings.bond.slice(0, 10)}
+                  hrefBase={hrefBase}
+                  format={(v) => v.toFixed(0)}
+                  unit={t.statsUnitDays}
+                  max={data.rankings.bond[0]?.value ?? 1}
+                />
+              </SectionCard>
+
+              <SectionCard title={t.statsGrowthTitle} hint={t.statsGrowthHint} className="lg:col-span-2">
+                <MetricList
+                  rows={data.rankings.growth.slice(0, 10)}
+                  hrefBase={hrefBase}
+                  format={(v) => `+${v.toFixed(0)}`}
+                  unit={t.statsUnitTimes}
+                  max={data.rankings.growth[0]?.value ?? 1}
+                />
               </SectionCard>
 
               <SectionCard

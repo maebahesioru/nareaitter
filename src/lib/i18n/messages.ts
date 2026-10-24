@@ -132,6 +132,27 @@ export type Messages = {
   statsCirclesTitle: string;
   statsRecentTitle: string;
   statsRecentHint: string;
+  statsTrendTitle: string;
+  statsTrendHint: string;
+  statsFastestTitle: string;
+  statsFastestHint: string;
+  statsReplyTitle: string;
+  statsReplyHint: string;
+  statsLongestTitle: string;
+  statsLongestHint: string;
+  statsKeigoTitle: string;
+  statsKeigoHint: string;
+  statsRisingTitle: string;
+  statsRisingHint: string;
+  statsBondTitle: string;
+  statsBondHint: string;
+  statsGrowthTitle: string;
+  statsGrowthHint: string;
+  statsUnitSec: string;
+  statsUnitMin: string;
+  statsUnitChars: string;
+  statsUnitPercent: string;
+  statsUnitDays: string;
   statsToday: string;
   statsYesterday: string;
   statsDaysAgo: string;
@@ -318,7 +339,6 @@ export const messages: Record<Locale, Messages> = {
     statsColMentions: "延べ交流",
     statsColBest: "最高",
     statsUnitCircles: "サークル",
-    statsUnitTimes: "回",
     statsUnitRank: "位",
     statsUnitPeople: "人",
     statsEmojisTitle: "よく使われる絵文字",
@@ -329,6 +349,28 @@ export const messages: Record<Locale, Messages> = {
     statsHoursHint: "各サークル上位64人の活動ピーク時間を集計しています。",
     statsRecentTitle: "最近つながった人",
     statsRecentHint: "最後に交流があったのが新しい順です（サークル横断）。",
+    statsTrendTitle: "日次の推移",
+    statsTrendHint: "記録した日ごとの延べ交流数。棒が高いほど賑わった日です。",
+    statsFastestTitle: "返信が速い人",
+    statsFastestHint: "相手→あなたの最速レス（記録した中で最短）。",
+    statsReplyTitle: "返信が速い人（中央値）",
+    statsReplyHint: "相手→あなたの返信速度の中央値を平均したもの。",
+    statsLongestTitle: "長文の人",
+    statsLongestHint: "相手のメンションの平均文字数。",
+    statsKeigoTitle: "敬語の人",
+    statsKeigoHint: "相手のメンションに占める敬語の割合。",
+    statsRisingTitle: "今週よく絡んでる人",
+    statsRisingHint: "直近7日間の交流回数（サークル横断の延べ）。",
+    statsBondTitle: "付き合いが長い人",
+    statsBondHint: "最初に交流してからの日数。",
+    statsGrowthTitle: "伸びてる人",
+    statsGrowthHint: "この記録期間内での延べ交流の増加数。",
+    statsUnitSec: "秒",
+    statsUnitMin: "分",
+    statsUnitChars: "文字",
+    statsUnitPercent: "%",
+    statsUnitDays: "日",
+    statsUnitTimes: "回",
     statsToday: "今日",
     statsYesterday: "昨日",
     statsDaysAgo: "{n}日前",
@@ -516,7 +558,6 @@ export const messages: Record<Locale, Messages> = {
     statsColMentions: "Mentions",
     statsColBest: "Best",
     statsUnitCircles: "circles",
-    statsUnitTimes: "×",
     statsUnitRank: "",
     statsUnitPeople: "people",
     statsEmojisTitle: "Top emojis",
@@ -527,6 +568,28 @@ export const messages: Record<Locale, Messages> = {
     statsHoursHint: "Peak activity hours of the top 64 of each circle.",
     statsRecentTitle: "Recently active",
     statsRecentHint: "Sorted by the most recent interaction, across circles.",
+    statsTrendTitle: "Daily trend",
+    statsTrendHint: "Total interactions per recorded day. Taller bars mean a busier day.",
+    statsFastestTitle: "Fastest responders",
+    statsFastestHint: "Their quickest reply to you, among recorded circles.",
+    statsReplyTitle: "Fastest responders (median)",
+    statsReplyHint: "Average of the median reply time from them to you.",
+    statsLongestTitle: "Longest messages",
+    statsLongestHint: "Average characters per mention from them.",
+    statsKeigoTitle: "Most polite",
+    statsKeigoHint: "Share of their mentions that use keigo.",
+    statsRisingTitle: "Most active this week",
+    statsRisingHint: "Interactions in the last 7 days, summed across circles.",
+    statsBondTitle: "Longest-running connections",
+    statsBondHint: "Days since the first interaction.",
+    statsGrowthTitle: "Fastest growing",
+    statsGrowthHint: "Increase in interactions during the recorded period.",
+    statsUnitSec: "s",
+    statsUnitMin: "min",
+    statsUnitChars: "chars",
+    statsUnitPercent: "%",
+    statsUnitDays: "d",
+    statsUnitTimes: "x",
     statsToday: "today",
     statsYesterday: "yesterday",
     statsDaysAgo: "{n}d ago",

@@ -19,9 +19,9 @@ import zlib from "node:zlib";
 
 const STATE_VERSION = 1;
 /** 直近何サークルぶんを保持するか（古いものは寄与を差し引いて捨てる） */
-const MAX_CIRCLES = 240;
+const MAX_CIRCLES = 1_000;
 /** 1サークルあたり何位までを集計対象にするか（長すぎる尾は重複が多く伸びない） */
-const MAX_PEERS_PER_CIRCLE = 120;
+const MAX_PEERS_PER_CIRCLE = 300;
 /** ユーザー表の上限（通常は数千人規模。暴走時の保険） */
 const MAX_USERS = 60_000;
 /** アバターURLは1件300〜400字と重いので保持件数に上限を設ける */
@@ -42,7 +42,7 @@ function isUsableAvatar(url: string | undefined): url is string {
   return true;
 }
 const PERSIST_MIN_INTERVAL_MS = 120_000;
-const PERSIST_MAX_BYTES = 24 * 1024 * 1024;
+const PERSIST_MAX_BYTES = 48 * 1024 * 1024;
 
 export type StatsPeerInput = {
   screenName: string;
@@ -57,6 +57,20 @@ export type StatsPeerInput = {
   laugh?: string;
   vocative?: string;
   lastInteractionAt?: string;
+  /** 相手→本人の返信速度（中央値・分） */
+  replyThemMin?: number;
+  /** 最速レス（秒） */
+  fastestThemSec?: number;
+  /** 平均文字数 */
+  avgLen?: number;
+  /** 敬語率 0-100 */
+  keigoRate?: number;
+  /** 直近7日の交流回数 */
+  mentionsLast7d?: number;
+  /** 週次カウント（4週前→今週） */
+  weekly?: number[];
+  /** 最初に交流した日時（ISO） */
+  firstInteractionAt?: string;
 };
 
 type PeerContribution = {
@@ -72,6 +86,20 @@ type PeerContribution = {
   k: number;
   /** 相手の活動ピーク時間帯（上位のみ） */
   h?: number;
+  /** 返信速度（分・中央値） */
+  rm?: number;
+  /** 最速レス（秒） */
+  fs?: number;
+  /** 平均文字数 */
+  al?: number;
+  /** 敬語率 0-100 */
+  kr?: number;
+  /** 直近7日 */
+  w7?: number;
+  /** 週次（4） */
+  wk?: number[];
+  /** 初対面の日（epoch 日数） */
+  fi?: number;
 };
 
 type CircleContribution = {
@@ -103,7 +131,64 @@ export type StatsUser = {
   lastSeen: number;
   /** 実際の最終交流日（epoch 日数） */
   lastActive?: number;
+  /** 返信速度の合計（分）と件数 */
+  rmS?: number;
+  rmC?: number;
+  /** 平均文字数の合計と件数 */
+  alS?: number;
+  alC?: number;
+  /** 敬語率の合計と件数 */
+  krS?: number;
+  krC?: number;
+  /** 直近7日の延べ交流 */
+  w7?: number;
+  /** 週次合計（4週前→今週） */
+  wk?: number[];
+  /** 記録した最速レス（秒・最小値） */
+  fst?: number;
+  /** 一番古い初対面の日（epoch 日数・最小値） */
+  fi?: number;
 };
+
+/** 1日ぶんのスナップショット（推移・伸び率の算出用） */
+type DailySnapshot = {
+  /** 延べ交流 */
+  m: number;
+  /** 人数 */
+  u: number;
+  /** 上位ユーザーの累積交流数 [screenName, mentions] */
+  top: Array<[string, number]>;
+};
+
+/** JST の YYYY-MM-DD */
+function dayKey(t = Date.now()): string {
+  const d = new Date(t + 9 * 3_600_000);
+  return d.toISOString().slice(0, 10);
+}
+
+/** ISO 文字列 → epoch 日数 */
+function toDayNum(iso: string | undefined): number | undefined {
+  if (!iso) return undefined;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? Math.floor(t / 86_400_000) : undefined;
+}
+
+function captureDaily(state: StatsState): void {
+  try {
+    const key = dayKey();
+    const users = Object.values(state.users);
+    const top = [...users]
+      .sort((a, b) => b.mentions - a.mentions)
+      .slice(0, 150)
+      .map((u) => [u.screenName, u.mentions] as [string, number]);
+    state.daily = state.daily ?? {};
+    state.daily[key] = { m: Math.max(0, state.totalMentions), u: users.length, top };
+    const keys = Object.keys(state.daily).sort();
+    for (const k of keys.slice(0, Math.max(0, keys.length - 45))) delete state.daily[k];
+  } catch {
+    // スナップショット失敗は致命的ではない
+  }
+}
 
 type StatsState = {
   version: number;
@@ -117,6 +202,8 @@ type StatsState = {
   hours: number[];
   /** 記録したサークル更新回数（再ビルド含む） */
   builds: number;
+  /** 日次スナップショット（YYYY-MM-DD → 合計と上位ユーザーの累積） */
+  daily?: Record<string, DailySnapshot>;
   /** 累積の延べ交流数 */
   totalMentions: number;
   /** アバターURLを保持している人数（保存サイズの上限管理用） */
@@ -153,6 +240,7 @@ function emptyState(): StatsState {
     hours: new Array(24).fill(0),
     builds: 0,
     totalMentions: 0,
+    daily: {},
   };
 }
 
@@ -271,6 +359,22 @@ function applyContribution(
       if (peer.k < u.bestRank) u.bestRank = peer.k;
       u.lastSeen = Math.max(u.lastSeen, now);
       if (peer.l) u.lastActive = Math.max(u.lastActive ?? 0, peer.l);
+      if (peer.rm !== undefined) {
+        u.rmS = (u.rmS ?? 0) + peer.rm;
+        u.rmC = (u.rmC ?? 0) + 1;
+      }
+      if (peer.al !== undefined) {
+        u.alS = (u.alS ?? 0) + peer.al;
+        u.alC = (u.alC ?? 0) + 1;
+      }
+      if (peer.kr !== undefined) {
+        u.krS = (u.krS ?? 0) + peer.kr;
+        u.krC = (u.krC ?? 0) + 1;
+      }
+      if (peer.w7 !== undefined) u.w7 = (u.w7 ?? 0) + peer.w7;
+      if (peer.wk) u.wk = u.wk ? u.wk.map((v, i) => v + (peer.wk?.[i] ?? 0)) : [...peer.wk];
+      if (peer.fs !== undefined) u.fst = Math.min(u.fst ?? Number.MAX_SAFE_INTEGER, peer.fs);
+      if (peer.fi !== undefined) u.fi = Math.min(u.fi ?? Number.MAX_SAFE_INTEGER, peer.fi);
     } else if (u) {
       u.appearances -= 1;
       u.mentions -= peer.n;
@@ -278,6 +382,20 @@ function applyContribution(
       u.sent -= peer.s;
       u.rankSum -= peer.k;
       u.rankedCircles -= 1;
+      if (peer.rm !== undefined) {
+        u.rmS = Math.max(0, (u.rmS ?? 0) - peer.rm);
+        u.rmC = Math.max(0, (u.rmC ?? 0) - 1);
+      }
+      if (peer.al !== undefined) {
+        u.alS = Math.max(0, (u.alS ?? 0) - peer.al);
+        u.alC = Math.max(0, (u.alC ?? 0) - 1);
+      }
+      if (peer.kr !== undefined) {
+        u.krS = Math.max(0, (u.krS ?? 0) - peer.kr);
+        u.krC = Math.max(0, (u.krC ?? 0) - 1);
+      }
+      if (peer.w7 !== undefined) u.w7 = Math.max(0, (u.w7 ?? 0) - peer.w7);
+      if (peer.wk && u.wk) u.wk = u.wk.map((v, i) => Math.max(0, v - (peer.wk?.[i] ?? 0)));
     }
   }
   for (const [e, n] of Object.entries(contrib.emojis)) bump(state.emojis, e, sign * n);
@@ -340,6 +458,7 @@ function schedulePersist(rt: StatsRuntime, immediate = false): void {
   rt.timer = setTimeout(() => {
     rt.timer = null;
     try {
+      captureDaily(rt.state);
       const body = serialize(rt);
       if (body.length > PERSIST_MAX_BYTES) {
         rt.persist.ok = false;
@@ -386,9 +505,6 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[]): void
     if (!key) return;
     const now = Date.now();
 
-    // 前回ぶんを差し引く（再ビルドでの二重計上を防ぐ）
-    const isNew = !state.circles[key];
-    dropCircle(state, key);
 
     const contrib: CircleContribution = {
       at: now,
@@ -417,6 +533,13 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[]): void
         k: i + 1,
         h: typeof p.activeHour === "number" ? p.activeHour : undefined,
         l: Number.isFinite(lastMs) ? Math.floor(lastMs / 86_400_000) : undefined,
+        rm: typeof p.replyThemMin === "number" && p.replyThemMin >= 0 ? p.replyThemMin : undefined,
+        fs: typeof p.fastestThemSec === "number" && p.fastestThemSec > 0 ? p.fastestThemSec : undefined,
+        al: typeof p.avgLen === "number" && p.avgLen > 0 ? p.avgLen : undefined,
+        kr: typeof p.keigoRate === "number" && p.keigoRate >= 0 ? p.keigoRate : undefined,
+        w7: typeof p.mentionsLast7d === "number" ? p.mentionsLast7d : undefined,
+        wk: Array.isArray(p.weekly) && p.weekly.length === 4 ? p.weekly.map((v) => Math.max(0, Math.round(v))) : undefined,
+        fi: toDayNum(p.firstInteractionAt),
       };
       const rawAvatar = p.avatarUrl?.trim() || p.avatarUrlPreview?.trim() || undefined;
       const avatar = isUsableAvatar(rawAvatar) ? rawAvatar : undefined;
@@ -427,8 +550,12 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[]): void
         if (p.vocative) contrib.vocatives[p.vocative] = (contrib.vocatives[p.vocative] ?? 0) + 1;
       }
     }
+    // 中身が無いときは前回ぶんを消さない（消すとデータが減るだけ）
     if (Object.keys(contrib.peers).length === 0) return;
 
+    // 前回ぶんを差し引く（再ビルドでの二重計上を防ぐ）
+    const isNew = !state.circles[key];
+    dropCircle(state, key);
     state.circles[key] = contrib;
     applyContribution(state, key, contrib, 1, meta, now);
     state.builds += 1;
@@ -455,6 +582,16 @@ export type StatsRankRow = {
   lastSeen: number;
 };
 
+export type StatsMetricRow = {
+  screenName: string;
+  displayName?: string;
+  avatar?: string;
+  /** 指標の値（単位は指標ごとに違う） */
+  value: number;
+};
+
+export type StatsTrendPoint = { d: string; m: number; u: number };
+
 export type StatsCircleRow = {
   screenName: string;
   users: number;
@@ -474,7 +611,15 @@ export type StatsSnapshot = {
     mentions: StatsRankRow[];
     rank: StatsRankRow[];
     recent: StatsRankRow[];
+    fastest: StatsMetricRow[];
+    reply: StatsMetricRow[];
+    longest: StatsMetricRow[];
+    keigo: StatsMetricRow[];
+    rising: StatsMetricRow[];
+    bond: StatsMetricRow[];
+    growth: StatsMetricRow[];
   };
+  trend: StatsTrendPoint[];
   emojis: Array<{ key: string; n: number }>;
   laughs: Array<{ key: string; n: number }>;
   vocatives: Array<{ key: string; n: number }>;
@@ -527,6 +672,67 @@ export function getStatsSnapshot(): StatsSnapshot {
     .slice(0, 40)
     .map((u) => toRow(u, u.appearances, u.mentions));
 
+  const metricRow = (u: StatsUser, value: number): StatsMetricRow => ({
+    screenName: u.screenName,
+    displayName: u.displayName,
+    avatar: isUsableAvatar(u.avatar) ? u.avatar : undefined,
+    value: Math.round(value * 10) / 10,
+  });
+
+  const byFastest = users
+    .filter((u) => typeof u.fst === "number" && (u.fst ?? 0) > 0 && u.fst !== Number.MAX_SAFE_INTEGER)
+    .sort((a, b) => (a.fst ?? 0) - (b.fst ?? 0))
+    .slice(0, 30)
+    .map((u) => metricRow(u, u.fst ?? 0));
+
+  const byReply = users
+    .filter((u) => (u.rmC ?? 0) > 0)
+    .sort((a, b) => (a.rmS ?? 0) / (a.rmC ?? 1) - (b.rmS ?? 0) / (b.rmC ?? 1))
+    .slice(0, 30)
+    .map((u) => metricRow(u, (u.rmS ?? 0) / (u.rmC ?? 1)));
+
+  const byLongest = users
+    .filter((u) => (u.alC ?? 0) > 0)
+    .sort((a, b) => (b.alS ?? 0) / (b.alC ?? 1) - (a.alS ?? 0) / (a.alC ?? 1))
+    .slice(0, 30)
+    .map((u) => metricRow(u, (u.alS ?? 0) / (u.alC ?? 1)));
+
+  const byKeigo = users
+    .filter((u) => (u.krC ?? 0) >= 2)
+    .sort((a, b) => (b.krS ?? 0) / (b.krC ?? 1) - (a.krS ?? 0) / (a.krC ?? 1))
+    .slice(0, 20)
+    .map((u) => metricRow(u, (u.krS ?? 0) / (u.krC ?? 1)));
+
+  const byRising = users
+    .filter((u) => (u.w7 ?? 0) > 0)
+    .sort((a, b) => (b.w7 ?? 0) - (a.w7 ?? 0) || b.mentions - a.mentions)
+    .slice(0, 30)
+    .map((u) => metricRow(u, u.w7 ?? 0));
+
+  const today = Math.floor(Date.now() / 86_400_000);
+  const byBond = users
+    .filter((u) => typeof u.fi === "number" && u.fi !== Number.MAX_SAFE_INTEGER)
+    .sort((a, b) => (a.fi ?? 0) - (b.fi ?? 0))
+    .slice(0, 30)
+    .map((u) => metricRow(u, Math.max(0, today - (u.fi ?? today))));
+
+  // 日次推移と伸び（直近7日で最も古いスナップショットとの差分）
+  if (!state.daily?.[dayKey()]) captureDaily(state);
+  const days = Object.keys(state.daily ?? {}).sort();
+  const trend: StatsTrendPoint[] = days.slice(-30).map((d) => ({
+    d,
+    m: state.daily?.[d]?.m ?? 0,
+    u: state.daily?.[d]?.u ?? 0,
+  }));
+  const base = days.slice(-7)[0];
+  const baseTop = new Map<string, number>(state.daily?.[base]?.top ?? []);
+  const growth: StatsMetricRow[] = [...users]
+    .map((u) => ({ u, diff: u.mentions - (baseTop.get(u.screenName) ?? u.mentions) }))
+    .filter((x) => x.diff > 0)
+    .sort((a, b) => b.diff - a.diff)
+    .slice(0, 20)
+    .map((x) => metricRow(x.u, x.diff));
+
   const recent = [...users]
     .sort((a, b) => (b.lastActive ?? 0) - (a.lastActive ?? 0) || b.lastSeen - a.lastSeen)
     .slice(0, 20)
@@ -535,7 +741,7 @@ export function getStatsSnapshot(): StatsSnapshot {
   const circles: StatsCircleRow[] = Object.entries(state.circles)
     .map(([screenName, c]) => ({ screenName, users: c.users, total: c.total, at: c.at }))
     .sort((a, b) => b.at - a.at)
-    .slice(0, 60);
+    .slice(0, 240);
 
   return {
     updatedAt: state.updatedAt,
@@ -550,7 +756,20 @@ export function getStatsSnapshot(): StatsSnapshot {
       lastError: rt.persist.lastError,
       lastWrite: rt.persist.lastWrite,
     },
-    rankings: { appearances: byAppearances, mentions: byMentions, rank: byRank, recent },
+    rankings: {
+      appearances: byAppearances,
+      mentions: byMentions,
+      rank: byRank,
+      recent,
+      fastest: byFastest,
+      reply: byReply,
+      longest: byLongest,
+      keigo: byKeigo,
+      rising: byRising,
+      bond: byBond,
+      growth,
+    },
+    trend,
     emojis: topEntries(state.emojis, 36),
     laughs: topEntries(state.laughs, 8),
     vocatives: topEntries(state.vocatives, 30),
