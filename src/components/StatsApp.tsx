@@ -939,6 +939,78 @@ export function StatsApp() {
                   </h3>
                   <Chips items={data.owners.weekday} />
                 </div>
+                <div className="mt-5 grid gap-5 border-t border-zinc-200/70 pt-4 sm:grid-cols-2 dark:border-white/10">
+                  <div>
+                    <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                      {t.statsOwnerNewConn}
+                    </h3>
+                    <MetricList
+                      rows={data.owners.newConn.map((o) => ({
+                        screenName: o.screenName,
+                        displayName: o.displayName,
+                        value: o.newConn ?? 0,
+                      }))}
+                      hrefBase={hrefBase}
+                      format={(v) => v.toFixed(0)}
+                      unit={t.statsUnitPeople}
+                      max={data.owners.newConn[0]?.newConn ?? 1}
+                    />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                      {t.statsOwnerDormant}
+                    </h3>
+                    <MetricList
+                      rows={data.owners.dormant.map((o) => ({
+                        screenName: o.screenName,
+                        displayName: o.displayName,
+                        value: o.dormant ?? 0,
+                      }))}
+                      hrefBase={hrefBase}
+                      format={(v) => v.toFixed(0)}
+                      unit={t.statsUnitPeople}
+                      max={data.owners.dormant[0]?.dormant ?? 1}
+                    />
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                      {t.statsOwnerPeakDay}
+                    </h3>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {data.owners.peakDays.length === 0 ? (
+                        <span className="text-xs text-zinc-500 dark:text-zinc-500">—</span>
+                      ) : (
+                        data.owners.peakDays.map((p) => (
+                          <span
+                            key={`${p.screenName}-${p.day}`}
+                            className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200/90 bg-white/70 px-2.5 py-1 text-[11px] text-zinc-700 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200"
+                          >
+                            <span className="truncate max-w-[8rem]">@{p.screenName}</span>
+                            <span className="tabular-nums text-zinc-500 dark:text-zinc-400">{p.day}</span>
+                            <span className="tabular-nums text-zinc-500 dark:text-zinc-400">
+                              {p.n}
+                            </span>
+                          </span>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                      {t.statsOwnerAge}
+                    </h3>
+                    <p className="mt-2 text-lg font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">
+                      {data.owners.medianAge > 0
+                        ? `${Math.round(data.owners.medianAge).toLocaleString(locale === "en" ? "en-US" : "ja-JP")} ${t.statsUnitDays}`
+                        : "—"}
+                    </p>
+                    <p className="mt-1 text-[10px] text-zinc-500 dark:text-zinc-500">
+                      {t.statsOwnerAgeHint}
+                    </p>
+                  </div>
+                </div>
               </SectionCard>
 
               <SectionCard

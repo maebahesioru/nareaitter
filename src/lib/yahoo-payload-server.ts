@@ -476,8 +476,23 @@ export async function buildYahooPayload(
           maxSilenceDays?: number;
           avgPostPerDay?: number;
           tone?: Record<string, number>;
+          fromYou7d?: number;
+          toYou7d?: number;
+          burstEpisodes?: number;
+          peakDay?: { date: string; n: number };
         }
       | undefined;
+    // 界隈の出入り（直近14日）
+    const nowMs = Date.now();
+    const d14 = 14 * 86400 * 1000;
+    const newConn14d = circleUsers.filter((u) => {
+      const f = u.firstInteractionAt ? Date.parse(u.firstInteractionAt) : NaN;
+      return Number.isFinite(f) && nowMs - f <= d14;
+    }).length;
+    const dormant14d = circleUsers.filter((u) => {
+      const l = u.lastInteractionAt ? Date.parse(u.lastInteractionAt) : NaN;
+      return Number.isFinite(l) && nowMs - l > d14;
+    }).length;
     recordCircleStats(name, circleUsers, {
       displayName: payload.profileDisplayName as string | undefined,
       avgLen: ownStyle?.avgLen,
@@ -498,18 +513,16 @@ export async function buildYahooPayload(
       following: profileData?.following ?? undefined,
       tweets: profileData?.tweets ?? undefined,
       hours: ownActivity?.topHours,
+      newConn14d,
+      dormant14d,
+      sent7d: ownActivity?.fromYou7d,
+      received7d: ownActivity?.toYou7d,
+      burstEpisodes: ownActivity?.burstEpisodes,
+      peakDay: ownActivity?.peakDay?.date,
+      peakDayCount: ownActivity?.peakDay?.n,
+      joinedAt: profileData?.joinedAt ? Date.parse(String(profileData.joinedAt)) || undefined : undefined,
+      likes: profileData?.likes ?? undefined,
     });
-    // 界隈の出入り（直近14日）
-    const nowMs = Date.now();
-    const d14 = 14 * 86400 * 1000;
-    const newConn14d = circleUsers.filter((u) => {
-      const f = u.firstInteractionAt ? Date.parse(u.firstInteractionAt) : NaN;
-      return Number.isFinite(f) && nowMs - f <= d14;
-    }).length;
-    const dormant14d = circleUsers.filter((u) => {
-      const l = u.lastInteractionAt ? Date.parse(u.lastInteractionAt) : NaN;
-      return Number.isFinite(l) && nowMs - l > d14;
-    }).length;
     (payload.selfActivity as Record<string, unknown>).newConn14d = newConn14d;
     (payload.selfActivity as Record<string, unknown>).dormant14d = dormant14d;
     // 最近知り合った相手トップ3（新しい順）

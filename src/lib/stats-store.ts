@@ -214,6 +214,15 @@ CREATE TABLE IF NOT EXISTS owner (
   following INTEGER,
   tweets INTEGER,
   hours TEXT,
+  newconn INTEGER,
+  dormant INTEGER,
+  out7 INTEGER,
+  in7 INTEGER,
+  burst INTEGER,
+  peak_day TEXT,
+  peak_n INTEGER,
+  joined INTEGER,
+  likes INTEGER,
   at INTEGER NOT NULL
 ) WITHOUT ROWID;
 
@@ -545,6 +554,15 @@ function ensureColumns(db: DatabaseSync): void {
     ["owner", "following", "INTEGER"],
     ["owner", "tweets", "INTEGER"],
     ["owner", "hours", "TEXT"],
+    ["owner", "newconn", "INTEGER"],
+    ["owner", "dormant", "INTEGER"],
+    ["owner", "out7", "INTEGER"],
+    ["owner", "in7", "INTEGER"],
+    ["owner", "burst", "INTEGER"],
+    ["owner", "peak_day", "TEXT"],
+    ["owner", "peak_n", "INTEGER"],
+    ["owner", "joined", "INTEGER"],
+    ["owner", "likes", "INTEGER"],
   ];
   for (const [table, col, type] of want) {
     try {
@@ -765,6 +783,24 @@ export type StatsSelfInput = {
   tweets?: number;
   /** よく投稿する時間帯（上位1〜3件の時） */
   hours?: number[];
+  /** 直近14日で新しくつながった相手の数 */
+  newConn14d?: number;
+  /** 直近14日以上返していない相手の数 */
+  dormant14d?: number;
+  /** 直近7日で自分が送った数 */
+  sent7d?: number;
+  /** 直近7日で自分が受け取った数 */
+  received7d?: number;
+  /** 連投（15分以内に3連投）の回数 */
+  burstEpisodes?: number;
+  /** 最多投稿日 */
+  peakDay?: string;
+  /** 最多投稿日の投稿数 */
+  peakDayCount?: number;
+  /** アカウント開設日時（epoch ms） */
+  joinedAt?: number;
+  /** いいね数 */
+  likes?: number;
 };
 
 type PeerRow = {
@@ -1113,8 +1149,9 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
       stmt(
         rt,
         `INSERT INTO owner(handle, display, avg_len, keigo, streak, laugh, emojis, vocatives, words,
-                           exclaim, tone, gap, posts, weekday, breadth, silence, followers, following, tweets, hours, at)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                           exclaim, tone, gap, posts, weekday, breadth, silence, followers, following, tweets, hours,
+                           newconn, dormant, out7, in7, burst, peak_day, peak_n, joined, likes, at)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(handle) DO UPDATE SET
            display = COALESCE(excluded.display, owner.display),
            avg_len = COALESCE(excluded.avg_len, owner.avg_len),
@@ -1135,6 +1172,15 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
            following = COALESCE(excluded.following, owner.following),
            tweets = COALESCE(excluded.tweets, owner.tweets),
            hours = COALESCE(excluded.hours, owner.hours),
+           newconn = COALESCE(excluded.newconn, owner.newconn),
+           dormant = COALESCE(excluded.dormant, owner.dormant),
+           out7 = COALESCE(excluded.out7, owner.out7),
+           in7 = COALESCE(excluded.in7, owner.in7),
+           burst = COALESCE(excluded.burst, owner.burst),
+           peak_day = COALESCE(excluded.peak_day, owner.peak_day),
+           peak_n = COALESCE(excluded.peak_n, owner.peak_n),
+           joined = COALESCE(excluded.joined, owner.joined),
+           likes = COALESCE(excluded.likes, owner.likes),
            at = excluded.at`,
       ).run(
         key,
@@ -1159,6 +1205,15 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
         Array.isArray(self.hours) && self.hours.length > 0
           ? JSON.stringify(self.hours.slice(0, 24).map((h) => Math.max(0, Math.min(23, Number(h) || 0))))
           : null,
+        numOrNull(self.newConn14d, 0),
+        numOrNull(self.dormant14d, 0),
+        numOrNull(self.sent7d, 0),
+        numOrNull(self.received7d, 0),
+        numOrNull(self.burstEpisodes, 0),
+        tidyName(self.peakDay),
+        numOrNull(self.peakDayCount, 0),
+        numOrNull(self.joinedAt, 0),
+        numOrNull(self.likes, 0),
         now,
       );
     }
@@ -1226,6 +1281,16 @@ export type StatsOwnerRow = {
   emojis: string[];
   exclaim?: number;
   followers?: number;
+  /** 直近14日で新しくつながった相手の数 */
+  newConn?: number;
+  /** 直近14日以上返していない相手の数（サークル内） */
+  dormant?: number;
+  /** 連投の回数 */
+  burst?: number;
+  /** 最多投稿日の投稿数 */
+  peakCount?: number;
+  /** アカウント開設日時（epoch ms） */
+  joined?: number;
 };
 
 export type StatsOwnerBoard = {
@@ -1234,6 +1299,14 @@ export type StatsOwnerBoard = {
   keigo: StatsOwnerRow[];
   exclaim: StatsOwnerRow[];
   followers: StatsOwnerRow[];
+  /** 直近14日で新しくつながった相手が多い順 */
+  newConn: StatsOwnerRow[];
+  /** 14日以上沈黙している相手が多い順 */
+  dormant: StatsOwnerRow[];
+  /** 最多投稿日ランキング（日付と件数） */
+  peakDays: Array<{ screenName: string; day: string; n: number }>;
+  /** アカウント開設からの日数の中央値 */
+  medianAge: number;
   /** サークル主のピーク時間帯の合計（24要素） */
   hours: number[];
   /** 感情語の平均（%） */
@@ -1541,6 +1614,10 @@ function EMPTY_OWNER_BOARD(): StatsOwnerBoard {
     keigo: [],
     exclaim: [],
     followers: [],
+    newConn: [],
+    dormant: [],
+    peakDays: [],
+    medianAge: 0,
     hours: new Array(24).fill(0) as number[],
     tone: { thanks: 0, love: 0, tired: 0, gloomy: 0 },
     weekday: [],
@@ -1600,11 +1677,26 @@ function avgTone(rows: Array<Record<string, unknown>>): { thanks: number; love: 
   };
 }
 
+/** アカウント開設からの日数の中央値 */
+function medianAge(rows: Array<Record<string, unknown>>): number {
+  const now = Date.now();
+  const ages = rows
+    .map((r) => (r.joined === null || r.joined === undefined ? NaN : now - Number(r.joined)))
+    .filter((v) => Number.isFinite(v) && v > 0)
+    .map((v) => Math.floor(v / 86_400_000))
+    .sort((a, b) => a - b);
+  if (ages.length === 0) return 0;
+  const mid = Math.floor(ages.length / 2);
+  return ages.length % 2 === 0 ? Math.round((ages[mid - 1] + ages[mid]) / 2) : ages[mid];
+}
+
 /** サークル主たちの傾向（1ハンドル1行なのでスキャンで十分） */
 function ownerBoard(db: DatabaseSync): StatsOwnerBoard {
   try {
     const rows = db
-      .prepare("SELECT handle, display, avg_len, keigo, streak, laugh, emojis, vocatives, words, exclaim, followers, tone, weekday, hours FROM owner")
+      .prepare(
+        "SELECT handle, display, avg_len, keigo, streak, laugh, emojis, vocatives, words, exclaim, followers, tone, weekday, hours, newconn, dormant, burst, peak_day, peak_n, joined FROM owner",
+      )
       .all() as Array<Record<string, unknown>>;
     if (rows.length === 0) return EMPTY_OWNER_BOARD();
     const toRow = (r: Record<string, unknown>): StatsOwnerRow => ({
@@ -1617,8 +1709,16 @@ function ownerBoard(db: DatabaseSync): StatsOwnerBoard {
       emojis: parseList(r.emojis),
       exclaim: r.exclaim === null ? undefined : Number(r.exclaim),
       followers: r.followers === null ? undefined : Number(r.followers),
+      newConn: r.newconn === null ? undefined : Number(r.newconn),
+      dormant: r.dormant === null ? undefined : Number(r.dormant),
+      burst: r.burst === null ? undefined : Number(r.burst),
+      peakCount: r.peak_n === null ? undefined : Number(r.peak_n),
+      joined: r.joined === null ? undefined : Number(r.joined),
     });
-    const pick = (key: "avg_len" | "keigo" | "exclaim" | "followers", limit: number): StatsOwnerRow[] =>
+    const pick = (
+      key: "avg_len" | "keigo" | "exclaim" | "followers" | "newconn" | "dormant" | "burst" | "peak_n",
+      limit: number,
+    ): StatsOwnerRow[] =>
       rows
         .filter((r) => r[key] !== null && Number(r[key]) > 0)
         .sort((a, b) => Number(b[key]) - Number(a[key]))
@@ -1630,6 +1730,18 @@ function ownerBoard(db: DatabaseSync): StatsOwnerBoard {
       keigo: pick("keigo", 10),
       exclaim: pick("exclaim", 10),
       followers: pick("followers", 10),
+      newConn: pick("newconn", 10),
+      dormant: pick("dormant", 10),
+      peakDays: rows
+        .filter((r) => typeof r.peak_day === "string" && Number(r.peak_n) > 0)
+        .sort((a, b) => Number(b.peak_n) - Number(a.peak_n))
+        .slice(0, 5)
+        .map((r) => ({
+          screenName: String(r.handle ?? ""),
+          day: String(r.peak_day),
+          n: Number(r.peak_n),
+        })),
+      medianAge: medianAge(rows),
       hours: sumHours(rows),
       tone: avgTone(rows),
       weekday: countList(

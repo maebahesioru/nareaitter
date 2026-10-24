@@ -161,6 +161,11 @@ export type Messages = {
   statsOwnerHoursTitle: string;
   statsOwnerHoursHint: string;
   statsOwnerWeekday: string;
+  statsOwnerNewConn: string;
+  statsOwnerDormant: string;
+  statsOwnerPeakDay: string;
+  statsOwnerAge: string;
+  statsOwnerAgeHint: string;
   statsLongestTitle: string;
   statsLongestHint: string;
   statsKeigoTitle: string;
@@ -402,6 +407,11 @@ export const messages: Record<Locale, Messages> = {
     statsOwnerHoursTitle: "サークル主が投稿する時間帯",
     statsOwnerHoursHint: "各サークル主の一番多い1時間を合算したもの。",
     statsOwnerWeekday: "平日型 / 休日型",
+    statsOwnerNewConn: "14日で新しくつながった人",
+    statsOwnerDormant: "14日以上返してない相手",
+    statsOwnerPeakDay: "最多投稿日",
+    statsOwnerAge: "アカウント年齢の中央値",
+    statsOwnerAgeHint: "サークル主のアカウント開設からの日数の中央値です。",
     statsLongestTitle: "長文の人",
     statsLongestHint: "相手のメンションの平均文字数。取得時に80文字で切っているため「81+」は頭打ち（同点は交流数順）。",
     statsKeigoTitle: "敬語の人",
@@ -645,6 +655,11 @@ export const messages: Record<Locale, Messages> = {
     statsOwnerHoursTitle: "When owners post",
     statsOwnerHoursHint: "Each owner's busiest hour, summed.",
     statsOwnerWeekday: "Weekday type / weekend type",
+    statsOwnerNewConn: "New connections in 14 days",
+    statsOwnerDormant: "Silent for 14+ days",
+    statsOwnerPeakDay: "Busiest day",
+    statsOwnerAge: "Median account age",
+    statsOwnerAgeHint: "Median days since each circle owner's account was created.",
     statsLongestTitle: "Longest messages",
     statsLongestHint: "Average characters per mention from them. Text is cut at 80 chars upstream, so \"81+\" means capped (ties ordered by interactions).",
     statsKeigoTitle: "Most polite",
