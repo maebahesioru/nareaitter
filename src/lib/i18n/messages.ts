@@ -149,6 +149,18 @@ export type Messages = {
   statsOwnerEmojis: string;
   statsOwnerWords: string;
   statsOwnerLaughs: string;
+  statsOwnerMoreTitle: string;
+  statsOwnerMoreHint: string;
+  statsOwnerFollowers: string;
+  statsOwnerExclaim: string;
+  statsOwnerTone: string;
+  statsOwnerToneThanks: string;
+  statsOwnerToneLove: string;
+  statsOwnerToneTired: string;
+  statsOwnerToneGloomy: string;
+  statsOwnerHoursTitle: string;
+  statsOwnerHoursHint: string;
+  statsOwnerWeekday: string;
   statsLongestTitle: string;
   statsLongestHint: string;
   statsKeigoTitle: string;
@@ -377,6 +389,19 @@ export const messages: Record<Locale, Messages> = {
     statsOwnerEmojis: "サークル主がよく使う絵文字",
     statsOwnerWords: "界隈でよく出る言葉",
     statsOwnerLaughs: "サークル主の笑い方",
+    statsOwnerMoreTitle: "サークル主の中身",
+    statsOwnerMoreHint:
+      "フォロワー数・感嘆符の多さ・感情語・投稿する時間帯と、界隈での喋り方の内訳。",
+    statsOwnerFollowers: "フォロワーが多いサークル主",
+    statsOwnerExclaim: "感嘆符（！）が多いサークル主",
+    statsOwnerTone: "感情語の平均",
+    statsOwnerToneThanks: "感謝",
+    statsOwnerToneLove: "好意",
+    statsOwnerToneTired: "疲れ",
+    statsOwnerToneGloomy: "陰り",
+    statsOwnerHoursTitle: "サークル主が投稿する時間帯",
+    statsOwnerHoursHint: "各サークル主の一番多い1時間を合算したもの。",
+    statsOwnerWeekday: "平日型 / 休日型",
     statsLongestTitle: "長文の人",
     statsLongestHint: "相手のメンションの平均文字数。取得時に80文字で切っているため「81+」は頭打ち（同点は交流数順）。",
     statsKeigoTitle: "敬語の人",
@@ -607,6 +632,19 @@ export const messages: Record<Locale, Messages> = {
     statsOwnerEmojis: "Emojis owners use most",
     statsOwnerWords: "Words that keep showing up",
     statsOwnerLaughs: "How owners laugh",
+    statsOwnerMoreTitle: "Inside the owners",
+    statsOwnerMoreHint:
+      "Followers, exclamation marks, tone words, posting hours and how they talk here.",
+    statsOwnerFollowers: "Owners with the most followers",
+    statsOwnerExclaim: "Owners who overuse ！",
+    statsOwnerTone: "Average tone words",
+    statsOwnerToneThanks: "Thanks",
+    statsOwnerToneLove: "Affection",
+    statsOwnerToneTired: "Tired",
+    statsOwnerToneGloomy: "Gloomy",
+    statsOwnerHoursTitle: "When owners post",
+    statsOwnerHoursHint: "Each owner's busiest hour, summed.",
+    statsOwnerWeekday: "Weekday type / weekend type",
     statsLongestTitle: "Longest messages",
     statsLongestHint: "Average characters per mention from them. Text is cut at 80 chars upstream, so \"81+\" means capped (ties ordered by interactions).",
     statsKeigoTitle: "Most polite",

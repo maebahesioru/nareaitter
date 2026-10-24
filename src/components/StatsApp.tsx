@@ -825,6 +825,123 @@ export function StatsApp() {
               </SectionCard>
 
               <SectionCard
+                title={t.statsOwnerMoreTitle}
+                hint={t.statsOwnerMoreHint}
+                className="lg:col-span-2"
+              >
+                <div className="grid gap-5 sm:grid-cols-2">
+                  <div>
+                    <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                      {t.statsOwnerFollowers}
+                    </h3>
+                    <MetricList
+                      rows={data.owners.followers.map((o) => ({
+                        screenName: o.screenName,
+                        displayName: o.displayName,
+                        value: o.followers ?? 0,
+                      }))}
+                      hrefBase={hrefBase}
+                      format={(v) => Math.round(v).toLocaleString(locale === "en" ? "en-US" : "ja-JP")}
+                      unit={t.statsUnitPeople}
+                      max={data.owners.followers[0]?.followers ?? 1}
+                    />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                      {t.statsOwnerExclaim}
+                    </h3>
+                    <MetricList
+                      rows={data.owners.exclaim.map((o) => ({
+                        screenName: o.screenName,
+                        displayName: o.displayName,
+                        value: o.exclaim ?? 0,
+                      }))}
+                      hrefBase={hrefBase}
+                      format={(v) => v.toFixed(0)}
+                      unit={t.statsUnitPercent}
+                      max={100}
+                    />
+                  </div>
+                </div>
+                <div className="mt-5">
+                  <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                    {t.statsOwnerTone}
+                  </h3>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    {(
+                      [
+                        ["thanks", t.statsOwnerToneThanks],
+                        ["love", t.statsOwnerToneLove],
+                        ["tired", t.statsOwnerToneTired],
+                        ["gloomy", t.statsOwnerToneGloomy],
+                      ] as const
+                    ).map(([key, label]) => {
+                      const v = data.owners.tone[key] ?? 0;
+                      const toneMax = Math.max(
+                        1,
+                        ...(["thanks", "love", "tired", "gloomy"] as const).map(
+                          (k) => data.owners.tone[k] ?? 0,
+                        ),
+                      );
+                      return (
+                        <div
+                          key={key}
+                          className="rounded-xl border border-zinc-200/80 bg-white/60 px-3 py-2 dark:border-white/10 dark:bg-zinc-900/40"
+                        >
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
+                              {label}
+                            </span>
+                            <span className="text-xs font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">
+                              {v}%
+                            </span>
+                          </div>
+                          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-zinc-200/80 dark:bg-white/10">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-sky-400 to-emerald-400"
+                              style={{ width: `${Math.min(100, Math.max(4, (v / toneMax) * 100))}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="mt-5">
+                  <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                    {t.statsOwnerHoursTitle}
+                  </h3>
+                  <div className="mt-2 flex h-20 items-end gap-[2px]">
+                    {data.owners.hours.map((v, h) => {
+                      const maxH = Math.max(1, ...data.owners.hours);
+                      const pct = Math.max(3, (v / maxH) * 100);
+                      return (
+                        <div
+                          key={h}
+                          className="group relative flex h-full flex-1 items-end"
+                          title={`${h}:00 — ${v}`}
+                        >
+                          <div
+                            className="w-full rounded-t-[3px] bg-gradient-to-t from-sky-400/70 to-emerald-400/90"
+                            style={{ height: `${pct}%` }}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-1.5 text-[10px] text-zinc-500 dark:text-zinc-500">
+                    {t.statsOwnerHoursHint}
+                  </p>
+                </div>
+                <div className="mt-4">
+                  <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
+                    {t.statsOwnerWeekday}
+                  </h3>
+                  <Chips items={data.owners.weekday} />
+                </div>
+              </SectionCard>
+
+              <SectionCard
                 title={t.statsCirclesTitle}
                 hint={t.statsCirclesHint}
                 className="lg:col-span-2"

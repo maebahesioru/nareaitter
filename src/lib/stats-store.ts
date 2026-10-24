@@ -203,6 +203,17 @@ CREATE TABLE IF NOT EXISTS owner (
   emojis TEXT,
   vocatives TEXT,
   words TEXT,
+  exclaim INTEGER,
+  tone TEXT,
+  gap REAL,
+  posts REAL,
+  weekday TEXT,
+  breadth INTEGER,
+  silence REAL,
+  followers INTEGER,
+  following INTEGER,
+  tweets INTEGER,
+  hours TEXT,
   at INTEGER NOT NULL
 ) WITHOUT ROWID;
 
@@ -523,6 +534,17 @@ function ensureColumns(db: DatabaseSync): void {
     ["users", "rmm_s", "REAL NOT NULL DEFAULT 0"],
     ["users", "rmm_c", "INTEGER NOT NULL DEFAULT 0"],
     ["users", "fsm", "INTEGER"],
+    ["owner", "exclaim", "INTEGER"],
+    ["owner", "tone", "TEXT"],
+    ["owner", "gap", "REAL"],
+    ["owner", "posts", "REAL"],
+    ["owner", "weekday", "TEXT"],
+    ["owner", "breadth", "INTEGER"],
+    ["owner", "silence", "REAL"],
+    ["owner", "followers", "INTEGER"],
+    ["owner", "following", "INTEGER"],
+    ["owner", "tweets", "INTEGER"],
+    ["owner", "hours", "TEXT"],
   ];
   for (const [table, col, type] of want) {
     try {
@@ -720,11 +742,29 @@ export type StatsSelfInput = {
   displayName?: string;
   avgLen?: number;
   keigoRate?: number;
+  exclaimRate?: number;
   streakDays?: number;
   laugh?: string;
   emojis?: string[];
   vocatives?: string[];
   words?: string[];
+  /** 感情語の割合（thanks/love/tired/gloomy、%） */
+  tone?: Record<string, number>;
+  /** 投稿間隔の中央値（分） */
+  postGapMin?: number;
+  /** 1日あたりの投稿数 */
+  postsPerDay?: number;
+  /** 平日型 / 休日型 / 均等型 */
+  weekdayType?: string;
+  /** 話しかけられた相手の数 */
+  breadth?: number;
+  /** 最長の沈黙（日） */
+  silence?: number;
+  followers?: number;
+  following?: number;
+  tweets?: number;
+  /** よく投稿する時間帯（上位1〜3件の時） */
+  hours?: number[];
 };
 
 type PeerRow = {
@@ -1072,8 +1112,9 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
     if (self) {
       stmt(
         rt,
-        `INSERT INTO owner(handle, display, avg_len, keigo, streak, laugh, emojis, vocatives, words, at)
-         VALUES(?,?,?,?,?,?,?,?,?,?)
+        `INSERT INTO owner(handle, display, avg_len, keigo, streak, laugh, emojis, vocatives, words,
+                           exclaim, tone, gap, posts, weekday, breadth, silence, followers, following, tweets, hours, at)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(handle) DO UPDATE SET
            display = COALESCE(excluded.display, owner.display),
            avg_len = COALESCE(excluded.avg_len, owner.avg_len),
@@ -1083,6 +1124,17 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
            emojis = COALESCE(excluded.emojis, owner.emojis),
            vocatives = COALESCE(excluded.vocatives, owner.vocatives),
            words = COALESCE(excluded.words, owner.words),
+           exclaim = COALESCE(excluded.exclaim, owner.exclaim),
+           tone = COALESCE(excluded.tone, owner.tone),
+           gap = COALESCE(excluded.gap, owner.gap),
+           posts = COALESCE(excluded.posts, owner.posts),
+           weekday = COALESCE(excluded.weekday, owner.weekday),
+           breadth = COALESCE(excluded.breadth, owner.breadth),
+           silence = COALESCE(excluded.silence, owner.silence),
+           followers = COALESCE(excluded.followers, owner.followers),
+           following = COALESCE(excluded.following, owner.following),
+           tweets = COALESCE(excluded.tweets, owner.tweets),
+           hours = COALESCE(excluded.hours, owner.hours),
            at = excluded.at`,
       ).run(
         key,
@@ -1094,6 +1146,19 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
         jsonList(self.emojis),
         jsonList(self.vocatives),
         jsonList(self.words),
+        numOrNull(self.exclaimRate, 0),
+        self.tone ? JSON.stringify(self.tone) : null,
+        numOrNull(self.postGapMin, 0),
+        numOrNull(self.postsPerDay, 0),
+        tidyName(self.weekdayType),
+        numOrNull(self.breadth, 0),
+        numOrNull(self.silence, 0),
+        numOrNull(self.followers, 0),
+        numOrNull(self.following, 0),
+        numOrNull(self.tweets, 0),
+        Array.isArray(self.hours) && self.hours.length > 0
+          ? JSON.stringify(self.hours.slice(0, 24).map((h) => Math.max(0, Math.min(23, Number(h) || 0))))
+          : null,
         now,
       );
     }
@@ -1159,12 +1224,21 @@ export type StatsOwnerRow = {
   streak?: number;
   laugh?: string;
   emojis: string[];
+  exclaim?: number;
+  followers?: number;
 };
 
 export type StatsOwnerBoard = {
   count: number;
   longest: StatsOwnerRow[];
   keigo: StatsOwnerRow[];
+  exclaim: StatsOwnerRow[];
+  followers: StatsOwnerRow[];
+  /** サークル主のピーク時間帯の合計（24要素） */
+  hours: number[];
+  /** 感情語の平均（%） */
+  tone: { thanks: number; love: number; tired: number; gloomy: number };
+  weekday: Array<{ key: string; n: number }>;
   laughs: Array<{ key: string; n: number }>;
   emojis: Array<{ key: string; n: number }>;
   vocatives: Array<{ key: string; n: number }>;
@@ -1461,14 +1535,76 @@ export function getStatsSnapshot(): StatsSnapshot {
 }
 
 function EMPTY_OWNER_BOARD(): StatsOwnerBoard {
-  return { count: 0, longest: [], keigo: [], laughs: [], emojis: [], vocatives: [], words: [] };
+  return {
+    count: 0,
+    longest: [],
+    keigo: [],
+    exclaim: [],
+    followers: [],
+    hours: new Array(24).fill(0) as number[],
+    tone: { thanks: 0, love: 0, tired: 0, gloomy: 0 },
+    weekday: [],
+    laughs: [],
+    emojis: [],
+    vocatives: [],
+    words: [],
+  };
+}
+
+/** サークル主のピーク時間帯を合算する（各人の上位1〜3時間に1票ずつ） */
+function sumHours(rows: Array<Record<string, unknown>>): number[] {
+  const out = new Array(24).fill(0) as number[];
+  for (const r of rows) {
+    let arr: unknown = null;
+    try {
+      const raw = r.hours;
+      arr = typeof raw === "string" ? (JSON.parse(raw) as unknown) : null;
+    } catch {
+      arr = null;
+    }
+    if (!Array.isArray(arr)) continue;
+    for (const raw of arr) {
+      const h = Number(raw);
+      if (Number.isInteger(h) && h >= 0 && h < 24) out[h] += 1;
+    }
+  }
+  return out;
+}
+
+/** 感情語プロファイルの平均（tone を持つサークル主だけを母数にする） */
+function avgTone(rows: Array<Record<string, unknown>>): { thanks: number; love: number; tired: number; gloomy: number } {
+  const keys = ["thanks", "love", "tired", "gloomy"] as const;
+  const sum: Record<string, number> = { thanks: 0, love: 0, tired: 0, gloomy: 0 };
+  let n = 0;
+  for (const r of rows) {
+    let obj: Record<string, unknown> | null = null;
+    try {
+      const raw = r.tone;
+      obj = typeof raw === "string" ? (JSON.parse(raw) as Record<string, unknown>) : null;
+    } catch {
+      obj = null;
+    }
+    if (!obj || typeof obj !== "object") continue;
+    n += 1;
+    for (const k of keys) {
+      const v = Number(obj[k]);
+      if (Number.isFinite(v)) sum[k] += v;
+    }
+  }
+  if (n === 0) return { thanks: 0, love: 0, tired: 0, gloomy: 0 };
+  return {
+    thanks: Math.round(sum.thanks / n),
+    love: Math.round(sum.love / n),
+    tired: Math.round(sum.tired / n),
+    gloomy: Math.round(sum.gloomy / n),
+  };
 }
 
 /** サークル主たちの傾向（1ハンドル1行なのでスキャンで十分） */
 function ownerBoard(db: DatabaseSync): StatsOwnerBoard {
   try {
     const rows = db
-      .prepare("SELECT handle, display, avg_len, keigo, streak, laugh, emojis, vocatives, words FROM owner")
+      .prepare("SELECT handle, display, avg_len, keigo, streak, laugh, emojis, vocatives, words, exclaim, followers, tone, weekday, hours FROM owner")
       .all() as Array<Record<string, unknown>>;
     if (rows.length === 0) return EMPTY_OWNER_BOARD();
     const toRow = (r: Record<string, unknown>): StatsOwnerRow => ({
@@ -1479,8 +1615,10 @@ function ownerBoard(db: DatabaseSync): StatsOwnerBoard {
       streak: r.streak === null ? undefined : Number(r.streak),
       laugh: (r.laugh as string | null) ?? undefined,
       emojis: parseList(r.emojis),
+      exclaim: r.exclaim === null ? undefined : Number(r.exclaim),
+      followers: r.followers === null ? undefined : Number(r.followers),
     });
-    const pick = (key: "avg_len" | "keigo", limit: number): StatsOwnerRow[] =>
+    const pick = (key: "avg_len" | "keigo" | "exclaim" | "followers", limit: number): StatsOwnerRow[] =>
       rows
         .filter((r) => r[key] !== null && Number(r[key]) > 0)
         .sort((a, b) => Number(b[key]) - Number(a[key]))
@@ -1490,6 +1628,14 @@ function ownerBoard(db: DatabaseSync): StatsOwnerBoard {
       count: rows.length,
       longest: pick("avg_len", 10),
       keigo: pick("keigo", 10),
+      exclaim: pick("exclaim", 10),
+      followers: pick("followers", 10),
+      hours: sumHours(rows),
+      tone: avgTone(rows),
+      weekday: countList(
+        rows.map((r) => (r.weekday as string | null) ?? "").filter(Boolean),
+        3,
+      ),
       laughs: countList(
         rows.map((r) => (r.laugh as string | null) ?? "").filter(Boolean),
         8,

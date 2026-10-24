@@ -459,16 +459,45 @@ export async function buildYahooPayload(
     payload.circleUsers = circleUsers;
     // サイト全体の統計ストアへ集計（失敗してもペイロード生成は続行する）
     const ownStyle = payload.selfStyle as
-      | { avgLen?: number; keigoRate?: number; streakDays?: number; laugh?: string }
+      | {
+          avgLen?: number;
+          keigoRate?: number;
+          exclaimRate?: number;
+          streakDays?: number;
+          laugh?: string;
+        }
+      | undefined;
+    const ownActivity = payload.selfActivity as
+      | {
+          topHours?: number[];
+          postGapMin?: number;
+          weekdayType?: string;
+          breadthFrom?: number;
+          maxSilenceDays?: number;
+          avgPostPerDay?: number;
+          tone?: Record<string, number>;
+        }
       | undefined;
     recordCircleStats(name, circleUsers, {
+      displayName: payload.profileDisplayName as string | undefined,
       avgLen: ownStyle?.avgLen,
       keigoRate: ownStyle?.keigoRate,
+      exclaimRate: ownStyle?.exclaimRate,
       streakDays: ownStyle?.streakDays,
       laugh: ownStyle?.laugh,
       emojis: payload.selfEmojis as string[] | undefined,
       vocatives: payload.selfVocatives as string[] | undefined,
       words: payload.communityWords as string[] | undefined,
+      tone: ownActivity?.tone,
+      postGapMin: ownActivity?.postGapMin,
+      postsPerDay: ownActivity?.avgPostPerDay,
+      weekdayType: ownActivity?.weekdayType,
+      breadth: ownActivity?.breadthFrom,
+      silence: ownActivity?.maxSilenceDays,
+      followers: profileData?.followers ?? undefined,
+      following: profileData?.following ?? undefined,
+      tweets: profileData?.tweets ?? undefined,
+      hours: ownActivity?.topHours,
     });
     // 界隈の出入り（直近14日）
     const nowMs = Date.now();

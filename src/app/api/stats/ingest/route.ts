@@ -107,7 +107,8 @@ export async function POST(req: NextRequest) {
       },
       { headers: { "Cache-Control": "no-store" } },
     );
-  } catch {
+  } catch (err) {
+    console.error("[stats-ingest] failed", name, err);
     return NextResponse.json(
       { error: "集計に失敗しました。ハンドルを確認して再試行してください。" },
       { status: 502, headers: { "Cache-Control": "no-store" } },
