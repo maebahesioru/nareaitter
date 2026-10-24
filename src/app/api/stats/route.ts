@@ -15,7 +15,7 @@ export const maxDuration = 60;
 export async function GET(req: Request) {
   try {
     // ?flush=1 でディスクへ書き出す（デバウンス待ちを飛ばす。デプロイ前の退避用）
-    if (new URL(req.url).searchParams.get("flush") === "1") flushStats();
+    if (new URL(req.url).searchParams.get("flush") === "1") await flushStats();
     const snapshot = getStatsSnapshot();
     after(() => {
       void backfillStatsAvatars(40).catch(() => {});

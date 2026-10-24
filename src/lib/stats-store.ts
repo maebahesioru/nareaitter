@@ -16,6 +16,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
+import { promisify } from "node:util";
 
 const STATE_VERSION = 1;
 /**
@@ -23,7 +24,10 @@ const STATE_VERSION = 1;
  * 代わりに「保存できるサイズ」だけを予算として持ち、超えたときだけ
  * 古いサークルから落とす。落とした件数は state.pruned に数えて可視化する。
  */
-const PERSIST_SOFT_BYTES = 24 * 1024 * 1024;
+/** gzip はスレッドプールで走らせる（イベントループを止めない） */
+const gzipAsync = promisify(zlib.gzip);
+
+const PERSIST_SOFT_BYTES = 64 * 1024 * 1024;
 const MAX_AVATAR_LEN = 400;
 /**
  * Yahoo が「画像なし」の相手に返す共通プレースホルダ。
@@ -41,7 +45,7 @@ function isUsableAvatar(url: string | undefined): url is string {
 }
 const PERSIST_MIN_INTERVAL_MS = 120_000;
 /** これを超えたら書き込みを諦める最終防波堤（通常は到達しない） */
-const PERSIST_HARD_BYTES = 96 * 1024 * 1024;
+const PERSIST_HARD_BYTES = 256 * 1024 * 1024;
 
 export type StatsPeerInput = {
   screenName: string;
@@ -219,6 +223,8 @@ type PersistInfo = {
   lastWrite: number;
   /** 最後に書き出した JSON のバイト数 */
   bytes: number;
+  /** 直近の保存にかかった時間（ms・シリアライズ+gzip+書き込み） */
+  lastMs: number;
 };
 
 type StatsRuntime = {
@@ -226,6 +232,8 @@ type StatsRuntime = {
   persist: PersistInfo;
   loaded: boolean;
   timer: ReturnType<typeof setTimeout> | null;
+  /** 書き込み中（多重実行の防止） */
+  busy: boolean;
 };
 
 const GLOBAL_KEY = "__nareaiStatsV1";
@@ -272,9 +280,10 @@ function runtime(): StatsRuntime {
     const dir = resolveDir();
     rt = {
       state: emptyState(),
-      persist: { dir, file: undefined, ok: false, lastWrite: 0, bytes: 0 },
+      persist: { dir, file: undefined, ok: false, lastWrite: 0, bytes: 0, lastMs: 0 },
       loaded: false,
       timer: null,
+      busy: false,
     };
     g[GLOBAL_KEY] = rt;
   }
@@ -437,6 +446,47 @@ function serialize(rt: StatsRuntime): string {
 }
 
 /** 書き出しをスケジュール（多重呼び出しはデバウンス） */
+/**
+ * ディスクへ書き出す。gzip と writeFile は非同期（イベントループを止めない）。
+ * サイズは件数ではなく PERSIST_SOFT_BYTES を基準に、超えたぶんだけ古いサークルを落とす。
+ */
+async function persistNow(rt: StatsRuntime): Promise<void> {
+  const file = rt.persist.file;
+  if (!file || rt.busy) return;
+  rt.busy = true;
+  const started = Date.now();
+  try {
+    captureDaily(rt.state);
+    let body = serialize(rt);
+    let guard = 0;
+    while (Buffer.byteLength(body, "utf8") > PERSIST_SOFT_BYTES && guard < 5_000) {
+      if (!dropOldestCircle(rt.state)) break;
+      body = serialize(rt);
+      guard += 1;
+    }
+    const bytes = Buffer.byteLength(body, "utf8");
+    if (bytes > PERSIST_HARD_BYTES) {
+      rt.persist.ok = false;
+      rt.persist.lastError = `payload too large (${Math.round(bytes / 1_048_576)}MB)`;
+      return;
+    }
+    const gz = await gzipAsync(Buffer.from(body, "utf8"));
+    const tmp = `${file}.tmp`;
+    await fs.promises.writeFile(tmp, gz);
+    await fs.promises.rename(tmp, file);
+    rt.persist.ok = true;
+    rt.persist.lastError = undefined;
+    rt.persist.lastWrite = Date.now();
+    rt.persist.bytes = bytes;
+  } catch (err) {
+    rt.persist.ok = false;
+    rt.persist.lastError = err instanceof Error ? err.message : String(err);
+  } finally {
+    rt.persist.lastMs = Date.now() - started;
+    rt.busy = false;
+  }
+}
+
 function schedulePersist(rt: StatsRuntime, immediate = false): void {
   const file = rt.persist.file;
   if (!file) return;
@@ -450,46 +500,22 @@ function schedulePersist(rt: StatsRuntime, immediate = false): void {
   }
   rt.timer = setTimeout(() => {
     rt.timer = null;
-    try {
-      captureDaily(rt.state);
-      let body = serialize(rt);
-      // 予算を超えたときだけ、古いサークルを落として作り直す（件数では切らない）
-      let guard = 0;
-      while (Buffer.byteLength(body, "utf8") > PERSIST_SOFT_BYTES && guard < 5_000) {
-        if (!dropOldestCircle(rt.state)) break;
-        body = serialize(rt);
-        guard += 1;
-      }
-      if (Buffer.byteLength(body, "utf8") > PERSIST_HARD_BYTES) {
-        rt.persist.ok = false;
-        rt.persist.lastError = "payload too large";
-        return;
-      }
-      // アバターURLなどで膨らむため gzip で保存する（実測 1サークル 68KB → 約 12KB）
-      const tmp = `${file}.tmp`;
-      fs.writeFileSync(tmp, zlib.gzipSync(Buffer.from(body, "utf8")));
-      fs.renameSync(tmp, file);
-      rt.persist.ok = true;
-      rt.persist.lastError = undefined;
-      rt.persist.lastWrite = Date.now();
-      rt.persist.bytes = Buffer.byteLength(body, "utf8");
-    } catch (err) {
-      rt.persist.ok = false;
-      rt.persist.lastError = err instanceof Error ? err.message : String(err);
-    }
+    void persistNow(rt);
   }, wait);
   // タイマーでプロセスを生かし続けない
   rt.timer.unref?.();
 }
 
 /** 集計を即座にディスクへ書く（デプロイ前確認・API 用） */
-export function flushStats(): PersistInfo {
+export async function flushStats(): Promise<PersistInfo> {
   const rt = runtime();
   if (rt.timer) {
     clearTimeout(rt.timer);
     rt.timer = null;
   }
-  schedulePersist(rt, true);
+  // 走っている書き込みが終わるのを待ってから、もう一度書く
+  for (let i = 0; i < 200 && rt.busy; i++) await new Promise((r) => setTimeout(r, 50));
+  await persistNow(rt);
   return { ...rt.persist };
 }
 
@@ -745,7 +771,7 @@ export function getStatsSnapshot(): StatsSnapshot {
   const circles: StatsCircleRow[] = Object.entries(state.circles)
     .map(([screenName, c]) => ({ screenName, users: c.users, total: c.total, at: c.at }))
     .sort((a, b) => b.at - a.at)
-    .slice(0, 240);
+    .slice(0, 1_000);
 
   return {
     updatedAt: state.updatedAt,
@@ -760,6 +786,7 @@ export function getStatsSnapshot(): StatsSnapshot {
       lastError: rt.persist.lastError,
       lastWrite: rt.persist.lastWrite,
       bytes: rt.persist.bytes,
+      lastMs: rt.persist.lastMs,
     },
     rankings: {
       appearances: byAppearances,
