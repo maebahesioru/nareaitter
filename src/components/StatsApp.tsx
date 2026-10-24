@@ -701,7 +701,7 @@ export function StatsApp() {
                 <MetricList
                   rows={data.rankings.longest.slice(0, 10)}
                   hrefBase={hrefBase}
-                  format={(v) => v.toFixed(0)}
+                  format={(v) => (v >= 80 ? `${v.toFixed(0)}+` : v.toFixed(0))}
                   unit={t.statsUnitChars}
                   max={data.rankings.longest[0]?.value ?? 1}
                 />

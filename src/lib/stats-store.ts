@@ -693,7 +693,11 @@ export function getStatsSnapshot(): StatsSnapshot {
 
   const byLongest = users
     .filter((u) => (u.alC ?? 0) > 0)
-    .sort((a, b) => (b.alS ?? 0) / (b.alC ?? 1) - (a.alS ?? 0) / (a.alC ?? 1))
+    // 元テキストが長さ上限で切られているため上限付近は同点になる。同点は交流数で割る
+    .sort(
+      (a, b) =>
+        (b.alS ?? 0) / (b.alC ?? 1) - (a.alS ?? 0) / (a.alC ?? 1) || b.mentions - a.mentions,
+    )
     .slice(0, 30)
     .map((u) => metricRow(u, (u.alS ?? 0) / (u.alC ?? 1)));
 
