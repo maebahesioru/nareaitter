@@ -24,8 +24,6 @@ const STATE_VERSION = 1;
  * 古いサークルから落とす。落とした件数は state.pruned に数えて可視化する。
  */
 const PERSIST_SOFT_BYTES = 24 * 1024 * 1024;
-/** アバターURLは1件300〜400字と重いので保持件数に上限を設ける */
-const MAX_AVATARS = 40_000;
 const MAX_AVATAR_LEN = 400;
 /**
  * Yahoo が「画像なし」の相手に返す共通プレースホルダ。
@@ -347,12 +345,7 @@ function applyContribution(
       }
       const m = meta?.[screen];
       if (m?.displayName && !u.displayName) u.displayName = m.displayName;
-      if (
-        m?.avatar &&
-        !u.avatar &&
-        isUsableAvatar(m.avatar) &&
-        (state.avatars ?? 0) < MAX_AVATARS
-      ) {
+      if (m?.avatar && !u.avatar && isUsableAvatar(m.avatar)) {
         u.avatar = m.avatar;
         state.avatars = (state.avatars ?? 0) + 1;
       }
@@ -819,8 +812,7 @@ export function setUserAvatar(screenName: string, url: string): boolean {
   if (!isUsableAvatar(url)) return false;
   if (isUsableAvatar(u.avatar)) return false; // 既に良いURLがある
   const hadAny = Boolean(u.avatar);
-  // 差し替えは件数が増えないので上限の対象外
-  if (!hadAny && (rt.state.avatars ?? 0) >= MAX_AVATARS) return false;
+  void hadAny;
   // プレースホルダ等の使えないURLが入っていた場合は差し替える（件数は増やさない）
   u.avatar = url;
   if (!hadAny) rt.state.avatars = (rt.state.avatars ?? 0) + 1;
