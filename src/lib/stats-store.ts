@@ -27,6 +27,20 @@ const MAX_USERS = 60_000;
 /** アバターURLは1件300〜400字と重いので保持件数に上限を設ける */
 const MAX_AVATARS = 6_000;
 const MAX_AVATAR_LEN = 400;
+/**
+ * Yahoo が「画像なし」の相手に返す共通プレースホルダ。
+ * これを保存すると全員が同じデフォルトアイコンになるので捨てる
+ * （表示側は /api/avatar-fallback で実アバターを解決する）。
+ */
+const AVATAR_PLACEHOLDER = "rts-pctr.c.yimg.jp/BgIFgYJGVIVv8u0nVJvw8B2FauAYMF4jOP5zFJAV4i5e72TLbER0x";
+
+/** 保存に値するアバターURLか（プレースホルダ・長すぎるものは不可） */
+function isUsableAvatar(url: string | undefined): url is string {
+  if (!url) return false;
+  if (url.length > MAX_AVATAR_LEN) return false;
+  if (url.includes(AVATAR_PLACEHOLDER)) return false;
+  return true;
+}
 const PERSIST_MIN_INTERVAL_MS = 120_000;
 const PERSIST_MAX_BYTES = 24 * 1024 * 1024;
 
@@ -242,7 +256,7 @@ function applyContribution(
       if (
         m?.avatar &&
         !u.avatar &&
-        m.avatar.length <= MAX_AVATAR_LEN &&
+        isUsableAvatar(m.avatar) &&
         (state.avatars ?? 0) < MAX_AVATARS
       ) {
         u.avatar = m.avatar;
@@ -404,7 +418,8 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[]): void
         h: typeof p.activeHour === "number" ? p.activeHour : undefined,
         l: Number.isFinite(lastMs) ? Math.floor(lastMs / 86_400_000) : undefined,
       };
-      const avatar = p.avatarUrl?.trim() || p.avatarUrlPreview?.trim() || undefined;
+      const rawAvatar = p.avatarUrl?.trim() || p.avatarUrlPreview?.trim() || undefined;
+      const avatar = isUsableAvatar(rawAvatar) ? rawAvatar : undefined;
       if (p.displayName || avatar) meta[screen] = { displayName: p.displayName, avatar };
       if (i < 20) {
         for (const e of p.topEmojis ?? []) if (e) contrib.emojis[e] = (contrib.emojis[e] ?? 0) + 1;
@@ -472,7 +487,7 @@ function toRow(u: StatsUser, appearances: number, mentions: number): StatsRankRo
   return {
     screenName: u.screenName,
     displayName: u.displayName,
-    avatar: u.avatar,
+    avatar: isUsableAvatar(u.avatar) ? u.avatar : undefined,
     appearances,
     mentions,
     received: Math.max(0, u.received),

@@ -11,10 +11,18 @@ import type { StatsRankRow, StatsSnapshot } from "@/lib/stats-store";
 type LoadState = "loading" | "ready" | "error";
 
 function Avatar({ row }: { row: StatsRankRow }) {
-  const [broken, setBroken] = useState(false);
+  const [stage, setStage] = useState(0);
   const initial = (row.screenName || "?").slice(0, 1).toUpperCase();
-  const src = row.avatar?.trim();
-  if (!src || broken) {
+  // 1) 保存済みアバター 2) 遅延解決（/api/avatar-fallback が fxtwitter から現物を取る） 3) 頭文字
+  const sources = useMemo(() => {
+    const list: string[] = [];
+    const stored = row.avatar?.trim();
+    if (stored) list.push(proxiedImageSrc(stored));
+    if (row.screenName) list.push(`/api/avatar-fallback?screen=${encodeURIComponent(row.screenName)}`);
+    return list;
+  }, [row.avatar, row.screenName]);
+  const src = sources[stage];
+  if (!src) {
     return (
       <span
         aria-hidden
@@ -27,7 +35,8 @@ function Avatar({ row }: { row: StatsRankRow }) {
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src={proxiedImageSrc(src)}
+      key={src}
+      src={src}
       alt=""
       aria-hidden
       width={36}
@@ -35,7 +44,7 @@ function Avatar({ row }: { row: StatsRankRow }) {
       loading="lazy"
       decoding="async"
       referrerPolicy="no-referrer"
-      onError={() => setBroken(true)}
+      onError={() => setStage((s) => s + 1)}
       className="h-9 w-9 shrink-0 rounded-full object-cover ring-1 ring-zinc-200 dark:ring-white/15"
     />
   );
