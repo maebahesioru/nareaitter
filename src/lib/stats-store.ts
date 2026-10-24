@@ -544,6 +544,38 @@ export function getStatsSnapshot(): StatsSnapshot {
   };
 }
 
+/**
+ * まだ集計していないハンドルの候補（芋づる式クロールの起点）。
+ * 集計済みサークルの登場人物を、何サークルに出ているかで重み付けして返す。
+ */
+export function getStatsCandidates(
+  limit = 200,
+): { screenName: string; circles: number; mentions: number }[] {
+  try {
+    const rt = runtime();
+    const state = rt.state;
+    const acc = new Map<string, { circles: number; mentions: number }>();
+    for (const contrib of Object.values(state.circles)) {
+      for (const [screen, peer] of Object.entries(contrib.peers)) {
+        if (state.circles[screen]) continue; // 集計済みは除外
+        const row = acc.get(screen);
+        if (row) {
+          row.circles += 1;
+          row.mentions += peer.n;
+        } else {
+          acc.set(screen, { circles: 1, mentions: peer.n });
+        }
+      }
+    }
+    return [...acc.entries()]
+      .map(([screenName, v]) => ({ screenName, ...v }))
+      .sort((a, b) => b.circles - a.circles || b.mentions - a.mentions)
+      .slice(0, Math.max(1, Math.min(2000, limit)));
+  } catch {
+    return [];
+  }
+}
+
 /** 計測用（デバッグ・検証スクリプト向け） */
 export function getStatsMeta(): { circles: number; users: number; persist: PersistInfo } {
   const rt = runtime();
