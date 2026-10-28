@@ -710,9 +710,10 @@ export function aggregateMentionAuthors(
       }
     }
     if (txt) {
+      // 敬語は「文末が敬体で終わっているか」で判定する（文中に『ます』があるだけで加点すると全員100%になる）
       const kc = keigoCounts.get(sn) ?? { n: 0, k: 0 };
       kc.n += 1;
-      if (/(です|ます|でした|ません|ください)/.test(txt)) kc.k += 1;
+      if (/(です|ます|でした|ません|ください|でしょう|ましょう|ですか|ますか|ですね|ますね|くださいませ)[。．.!！?？…\s]*$/u.test(txt.trim())) kc.k += 1;
       keigoCounts.set(sn, kc);
     }
   }
@@ -722,7 +723,7 @@ export function aggregateMentionAuthors(
       cur.hist = cur.hist.slice(0, 8);
     }
     const kc = keigoCounts.get(sn);
-    if (kc && kc.n >= 4) cur.keigo = Math.round((kc.k / kc.n) * 100);
+    if (kc && kc.n >= 5) cur.keigo = Math.round((kc.k / kc.n) * 100);
     const em = emojiCounts.get(sn);
     if (em) cur.emojis = topEmojisOf(em);
     const hc = hourCounts.get(sn);

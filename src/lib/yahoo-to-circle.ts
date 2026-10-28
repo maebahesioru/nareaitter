@@ -29,8 +29,9 @@ function replySpeeds(hist: HistItem[]): { themMin?: number; meMin?: number; them
       break;
     }
   }
-  const toMin = (g?: number) => (g !== undefined ? Math.max(1, Math.round(g / 60)) : undefined);
-  const toFast = (gs: number[]) => (gs.length ? Math.max(5, Math.min(...gs)) : undefined);
+  // 下限クランプは廃止（以前は 5秒/1分 で頭打ちになり、速い人ほど全部同じ値になっていた）
+  const toMin = (g?: number) => (g !== undefined ? Math.max(0, Math.round((g / 60) * 100) / 100) : undefined);
+  const toFast = (gs: number[]) => (gs.length ? Math.min(...gs) : undefined);
   return { themMin: toMin(median(themGaps)), meMin: toMin(median(meGaps)), themSec: toFast(themGaps), meSec: toFast(meGaps) };
 }
 
