@@ -1904,6 +1904,24 @@ function ownerBoard(db: DatabaseSync): StatsOwnerBoard {
  * まだ集計していないハンドルの候補（芋づる式クロールの起点）。
  * 集計済みサークルの登場人物を、何サークルに出ているかで重み付けして返す。
  */
+/** 集計済みサークルのハンドル一覧（バックフィル用・軽量）。 */
+export function listStatsCircles(): Array<{ screenName: string; users: number; at: number }> {
+  const rt = runtime();
+  if (!rt.db) return [];
+  try {
+    const rows = rt.db
+      .prepare("SELECT handle, users, at FROM circles ORDER BY at DESC")
+      .all() as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      screenName: String(r.handle),
+      users: Number(r.users ?? 0),
+      at: Number(r.at ?? 0),
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export function getStatsCandidates(limit = 200): { screenName: string; circles: number; mentions: number }[] {
   try {
     const rt = runtime();
