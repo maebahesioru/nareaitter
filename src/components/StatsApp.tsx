@@ -327,10 +327,10 @@ function SectionCard({
   );
 }
 
-export function StatsApp() {
+export function StatsApp({ initial = null }: { initial?: StatsSnapshot | null }) {
   const { locale, t, homePath } = useLocale();
-  const [data, setData] = useState<StatsSnapshot | null>(null);
-  const [state, setState] = useState<LoadState>("loading");
+  const [data, setData] = useState<StatsSnapshot | null>(initial);
+  const [state, setState] = useState<LoadState>(initial ? "ready" : "loading");
   const [handle, setHandle] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
@@ -358,9 +358,9 @@ export function StatsApp() {
   }, []);
 
   useEffect(() => {
-    // 直前のスナップショットで先に描画しておく（待ち時間ゼロの見た目）
+    // サーバから初期データが来ていればそれで描画済み。無いときだけ手元のキャッシュを使う
     try {
-      const raw = sessionStorage.getItem(CACHE_KEY);
+      const raw = initial ? null : sessionStorage.getItem(CACHE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as { at?: number; data?: StatsSnapshot };
         if (parsed?.data && Date.now() - (parsed.at ?? 0) < CACHE_TTL_MS) {
@@ -372,7 +372,7 @@ export function StatsApp() {
       /* 壊れたキャッシュは無視 */
     }
     void load();
-  }, [load]);
+  }, [load, initial]);
 
   const onSubmit = useCallback(
     async (e: React.FormEvent) => {
