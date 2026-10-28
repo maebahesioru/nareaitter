@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { CirclePageShell } from "@/app/CirclePageShell";
 import { StatsApp } from "@/components/StatsApp";
-import { getStatsSnapshotCached } from "@/lib/stats-snapshot-cache";
 
 export const metadata: Metadata = {
   title: "Mutual Circle Stats — site-wide rankings",
@@ -19,19 +18,10 @@ export const metadata: Metadata = {
   },
 };
 
-export const dynamic = "force-dynamic";
-
-export default async function StatsPageEn() {
-  // サーバ側でスナップショットを載せて、JS 読み込み前から中身を出す（体感の高速化）
-  let initial = null;
-  try {
-    initial = await getStatsSnapshotCached();
-  } catch {
-    initial = null;
-  }
+export default function StatsPageEn() {
   return (
     <CirclePageShell>
-      <StatsApp initial={initial} />
+      <StatsApp />
     </CirclePageShell>
   );
 }
