@@ -6,8 +6,10 @@ import type { StatsSnapshot } from "@/lib/stats-store";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-/** スナップショットの使い回し時間。ビルドは数分おきなので15秒の遅れは実害がない */
-const SNAPSHOT_TTL_MS = 15_000;
+/** これより古くなったら「裏で」作り直す（ユーザーは待たせない）。ビルドは数分おきなので遅れは実害なし */
+const SNAPSHOT_REFRESH_MS = 60_000;
+/** 作り直しに失敗し続けたときの保険。これ以上古いものは出さない */
+const SNAPSHOT_MAX_STALE_MS = 30 * 60_000;
 
 type SnapshotCache = {
   at: number;
@@ -22,8 +24,8 @@ const cache = (globalForStats.__nareaiStatsSnapshotCache ??= { at: 0, data: null
  * スナップショットは SQLite への問い合わせ十数本で作るので、同時アクセスで作り直さない。
  * 15秒だけメモリに残し、その間のリクエストは同じオブジェクトを返す。
  */
-function snapshot(): Promise<StatsSnapshot> {
-  if (cache.data && Date.now() - cache.at < SNAPSHOT_TTL_MS) return Promise.resolve(cache.data);
+/** スナップショットを作り直す（多重起動しない） */
+function refresh(): Promise<StatsSnapshot> {
   if (cache.inflight) return cache.inflight;
   cache.inflight = Promise.resolve()
     .then(() => {
@@ -54,14 +56,21 @@ export async function GET(req: Request) {
       const snapshotNow = getStatsSnapshot();
       return NextResponse.json(snapshotNow, { headers: { "Cache-Control": "no-store" } });
     }
-    const data = await snapshot();
+    // 手元にスナップショットがあれば、古くても即返して更新は裏で回す（体感ゼロ）
+    const fresh = cache.data && Date.now() - cache.at <= SNAPSHOT_MAX_STALE_MS ? cache.data : null;
+    const data = fresh ?? (await refresh());
+    if (fresh && Date.now() - cache.at > SNAPSHOT_REFRESH_MS) {
+      after(() => {
+        void refresh().catch(() => {});
+      });
+    }
     after(() => {
       void backfillStatsAvatars(40).catch(() => {});
     });
     return NextResponse.json(data, {
       headers: {
         // エッジ/ブラウザは60秒使い回し、その後は裏で更新（体感を待たせない）
-        "Cache-Control": "public, max-age=0, s-maxage=60, stale-while-revalidate=300",
+        "Cache-Control": "public, max-age=30, s-maxage=60, stale-while-revalidate=600",
       },
     });
   } catch {
