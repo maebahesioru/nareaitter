@@ -5,6 +5,7 @@ import { AppLink } from "@/components/AppLink";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useLocale } from "@/components/LocaleProvider";
+import { Twemoji } from "@/components/Twemoji";
 import { proxiedImageSrc } from "@/lib/proxied-image-src";
 import type { StatsMetricRow, StatsRankRow, StatsSnapshot } from "@/lib/stats-store";
 
@@ -228,9 +229,11 @@ function Chips({
           key={it.key}
           className="inline-flex items-center gap-1 rounded-full border border-zinc-200/90 bg-white/70 px-2.5 py-1 text-xs text-zinc-700 shadow-sm dark:border-white/10 dark:bg-white/5 dark:text-zinc-200"
         >
-          <span className={emoji ? "text-base leading-none" : "font-medium"}>
-            {it.key}
-          </span>
+          {emoji ? (
+            <Twemoji emoji={it.key} className="h-[18px] w-[18px]" />
+          ) : (
+            <span className="font-medium">{it.key}</span>
+          )}
           {it.n > 1 ? (
             <span className="text-[10px] tabular-nums text-zinc-500 dark:text-zinc-400">
               {it.n}

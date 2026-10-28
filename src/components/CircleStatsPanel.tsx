@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { useLocale } from "@/components/LocaleProvider";
 import type { CircleUser } from "@/types/circle";
+import { Twemoji } from "@/components/Twemoji";
 
 function median(values: number[]): number {
   if (values.length === 0) return 0;
@@ -88,7 +89,7 @@ function ChipRow({
               key={it.key}
               className="inline-flex items-center gap-1 rounded-full border border-zinc-200/90 bg-white/80 px-2 py-0.5 text-[11px] text-zinc-700 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200"
             >
-              <span className={emoji ? "text-sm leading-none" : ""}>{it.key}</span>
+              {emoji ? <Twemoji emoji={it.key} /> : <span>{it.key}</span>}
               {it.n > 1 ? (
                 <span className="tabular-nums text-[10px] text-zinc-500 dark:text-zinc-400">
                   {it.n}
