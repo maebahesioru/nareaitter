@@ -1697,7 +1697,7 @@ export function getStatsSnapshot(): StatsSnapshot {
     .prepare("SELECT COALESCE(SUM(mentions),0) AS m, COUNT(*) AS u FROM users WHERE appearances>0")
     .get();
   const circles = (
-    db.prepare("SELECT handle, users, total, at FROM circles ORDER BY at DESC LIMIT 1000").all() as Array<
+    db.prepare("SELECT handle, users, total, at FROM circles ORDER BY at DESC LIMIT 300").all() as Array<
       Record<string, unknown>
     >
   ).map((c) => ({
