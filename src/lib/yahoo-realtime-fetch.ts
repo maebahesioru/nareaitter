@@ -610,10 +610,16 @@ export type MentionPeerAgg = {
   avgLen?: number;
 };
 
-/** テキストから絵文字を抽出（ZWJ連結・国旗ペア対応の簡易版） */
+/**
+ * テキストから絵文字を抽出（ZWJ連結・国旗ペア・キーキャップ対応）。
+ * 異体字セレクタ U+FE0F を落として返すので、「✨」と「✨️」は同じ1種類として数えられる。
+ */
 export function extractEmojis(text: string): string[] {
-  const re = /\p{Regional_Indicator}{2}|\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*/gu;
-  return text.match(re) ?? [];
+  const re =
+    /\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}\uFE0F?)*/gu;
+  const m = text.match(re);
+  if (!m) return [];
+  return m.map((e) => e.replace(/\uFE0F/g, ""));
 }
 
 function topEmojisOf(counts: Map<string, number>, k = 3): string[] | undefined {

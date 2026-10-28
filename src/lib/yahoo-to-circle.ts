@@ -192,7 +192,7 @@ export async function yahooAggregatesToCircleUsers(
       const hdRaw = wantHd ? await resolveCircleAvatarUrl(r.screen) : null;
       const avatarUrl = hdRaw?.trim() || undefined;
       const keepContext = i < 64;
-      const keepDeep = i < 20;
+      const keepDeep = i < 64;
       const keepTop5 = i < 10;
       const speeds = keepDeep ? replySpeeds(r.hist) : {};
       return {

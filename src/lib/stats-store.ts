@@ -586,6 +586,61 @@ function fixLegacyHourShift(db: DatabaseSync): void {
   }
 }
 
+/**
+ * 異体字セレクタ（U+FE0F）の有無で分裂した絵文字キーを統合する。
+ * 例: 「✨️」1293 と「✨」2672 は同じキーになり、合算される。
+ */
+function fixEmojiVariants(db: DatabaseSync): void {
+  const KEY = "emoji_norm_v1";
+  try {
+    if (getMeta(db, KEY)) return;
+    const strip = (k: string) => k.replace(/\uFE0F/g, "");
+
+    const aggRows = db.prepare("SELECT key, n FROM agg WHERE kind = 'emoji'").all() as Array<
+      Record<string, unknown>
+    >;
+    const merged = new Map<string, number>();
+    let changed = false;
+    for (const r of aggRows) {
+      const raw = String(r.key ?? "");
+      const k = strip(raw);
+      if (k !== raw) changed = true;
+      merged.set(k, (merged.get(k) ?? 0) + Number(r.n ?? 0));
+    }
+    if (changed) {
+      db.prepare("DELETE FROM agg WHERE kind = 'emoji'").run();
+      const ins = db.prepare("INSERT INTO agg(kind, key, n) VALUES('emoji', ?, ?)");
+      for (const [k, n] of merged) ins.run(k, n);
+    }
+
+    const caRows = db.prepare("SELECT circle, key, n FROM circle_agg WHERE kind = 'emoji'").all() as Array<
+      Record<string, unknown>
+    >;
+    const perCircle = new Map<string, Map<string, number>>();
+    let caChanged = false;
+    for (const r of caRows) {
+      const circle = String(r.circle ?? "");
+      const raw = String(r.key ?? "");
+      const k = strip(raw);
+      if (k !== raw) caChanged = true;
+      const m = perCircle.get(circle) ?? new Map<string, number>();
+      m.set(k, (m.get(k) ?? 0) + Number(r.n ?? 0));
+      perCircle.set(circle, m);
+    }
+    if (caChanged) {
+      db.prepare("DELETE FROM circle_agg WHERE kind = 'emoji'").run();
+      const ins = db.prepare("INSERT INTO circle_agg(circle, kind, key, n) VALUES(?, 'emoji', ?, ?)");
+      for (const [circle, m] of perCircle) {
+        for (const [k, n] of m) ins.run(circle, k, n);
+      }
+    }
+
+    setMeta(db, KEY, String(Date.now()));
+  } catch {
+    /* 統合に失敗しても統計は動かす */
+  }
+}
+
 /** 既存 DB に後から足した列を補う（WITHOUT ROWID でも ADD COLUMN は可）。 */
 function ensureColumns(db: DatabaseSync): void {
   const want: Array<[string, string, string]> = [
@@ -632,6 +687,7 @@ function openDb(rt: Runtime): DatabaseSync {
   db.exec(SCHEMA);
   ensureColumns(db);
   fixLegacyHourShift(db);
+  fixEmojiVariants(db);
   if (!rt.migrated) {
     rt.migrated = true;
     const hasCircles = db.prepare("SELECT COUNT(*) AS n FROM circles").get();
