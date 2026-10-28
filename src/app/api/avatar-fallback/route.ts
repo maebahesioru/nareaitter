@@ -20,8 +20,12 @@ export async function GET(req: NextRequest) {
   }
   const hd = await resolveCircleAvatarUrl(screen);
   if (!hd) {
-    // 存在しない/解決不能アカウント。短めにキャッシュして再試行を抑える
-    return new Response("not_found", { status: 404, headers: { "Cache-Control": "public, max-age=600, s-maxage=600" } });
+    // 未解決（存在しない場合と、fxtwitter 側の一時的な休止の両方があり得る）。
+    // 長くキャッシュすると復帰後も欠けたままになるので短命にする。
+    return new Response("not_found", {
+      status: 404,
+      headers: { "Cache-Control": "public, max-age=60, s-maxage=60" },
+    });
   }
   // X の既定アイコンしか無いアカウントは「画像なし」として扱う
   if (hd.includes("default_profile") || hd.includes("/sticky/default_profile_images/")) {
@@ -33,23 +37,13 @@ export async function GET(req: NextRequest) {
   } catch {
     /* ストア未初期化などは無視 */
   }
-  try {
-    const img = await fetch(hd, {
-      headers: { "User-Agent": UA, Accept: "image/*" },
-      signal: AbortSignal.timeout(8000),
-      next: { revalidate: 86400 },
-    });
-    if (!img.ok || !img.body) {
-      return new Response("upstream_error", { status: 502, headers: { "Cache-Control": "public, max-age=120, s-maxage=300" } });
-    }
-    return new Response(img.body, {
-      status: 200,
-      headers: {
-        "Content-Type": img.headers.get("content-type") ?? "image/jpeg",
-        "Cache-Control": "public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800",
-      },
-    });
-  } catch {
-    return new Response("fetch_error", { status: 502, headers: { "Cache-Control": "public, max-age=120, s-maxage=300" } });
-  }
+  // pbs.twimg.com から画像バイトをサーバ経由で取ると、上流の遅延で 8 秒待ち→502 になるため、
+  // 解決済み URL へリダイレクトしてブラウザに直接読ませる。
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: hd,
+      "Cache-Control": "public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800",
+    },
+  });
 }
