@@ -616,14 +616,19 @@ export type MentionPeerAgg = {
  */
 export function extractEmojis(text: string): string[] {
   const re =
-    /\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}\uFE0F?)*/gu;
+    /\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|\p{Extended_Pictographic}[\u{1F3FB}-\u{1F3FF}]*(?:\uFE0F|\u200D\p{Extended_Pictographic}[\u{1F3FB}-\u{1F3FF}]*\uFE0F?)*[\u{E0020}-\u{E007E}]*/gu;
   const m = text.match(re);
   if (!m) return [];
-  return m.map((e) => e.replace(/\uFE0F/g, ""));
+  return m.map((e) =>
+    e
+      // 異体字セレクタ（FE0F/FE0E）と肌色トーン（1F3FB-1F3FF）は同じ絵文字として数える
+      .replace(/[\uFE0E\uFE0F]/g, "")
+      .replace(/[\u{1F3FB}-\u{1F3FF}]/gu, ""),
+  );
 }
 
-function topEmojisOf(counts: Map<string, number>, k = 3): string[] | undefined {
-  const arr = [...counts.entries()].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, k);
+function topEmojisOf(counts: Map<string, number>, k = 8): string[] | undefined {
+  const arr = [...counts.entries()].filter(([, n]) => n >= 1).sort((a, b) => b[1] - a[1]).slice(0, k);
   return arr.length ? arr.map(([e]) => e) : undefined;
 }
 
