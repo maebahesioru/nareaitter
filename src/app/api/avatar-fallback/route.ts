@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { setUserAvatar } from "@/lib/stats-store";
 import { resolveCircleAvatarUrl } from "@/lib/x-profile-image";
 
 export const runtime = "nodejs";
@@ -21,6 +22,16 @@ export async function GET(req: NextRequest) {
   if (!hd) {
     // 存在しない/解決不能アカウント。短めにキャッシュして再試行を抑える
     return new Response("not_found", { status: 404, headers: { "Cache-Control": "public, max-age=600, s-maxage=600" } });
+  }
+  // X の既定アイコンしか無いアカウントは「画像なし」として扱う
+  if (hd.includes("default_profile") || hd.includes("/sticky/default_profile_images/")) {
+    return new Response("not_found", { status: 404, headers: { "Cache-Control": "public, max-age=600, s-maxage=600" } });
+  }
+  // 解決できた URL は統計ストアにも書き戻す（次回のページ表示で即描画できる）
+  try {
+    setUserAvatar(screen, hd);
+  } catch {
+    /* ストア未初期化などは無視 */
   }
   try {
     const img = await fetch(hd, {

@@ -68,6 +68,9 @@ function isUsableAvatar(url: string | null | undefined): url is string {
   if (!url) return false;
   if (url.length > MAX_AVATAR_LEN) return false;
   if (url.includes(AVATAR_PLACEHOLDER)) return false;
+  // X の既定アイコン（グレーの卵）は「未有効」と同じ扱い
+  if (url.includes("/sticky/default_profile_images/")) return false;
+  if (url.includes("/profile_images/default_profile")) return false;
   return true;
 }
 

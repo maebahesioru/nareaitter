@@ -13,8 +13,9 @@ type LoadState = "loading" | "ready" | "error";
 
 function Avatar({ row }: { row: { screenName: string; displayName?: string; avatar?: string } }) {
   const [stage, setStage] = useState(0);
-  const initial = (row.screenName || "?").slice(0, 1).toUpperCase();
-  // 1) 保存済みアバター 2) 遅延解決（/api/avatar-fallback が fxtwitter から現物を取る） 3) 頭文字
+  // 頭文字は表示名から取る（ハンドルの頭1文字だけだと "C" みたいな意味不明な表示になる）
+  const label =
+    Array.from((row.displayName?.trim() || row.screenName || "?").trim())[0]?.toUpperCase() ?? "?";
   const sources = useMemo(() => {
     const list: string[] = [];
     const stored = row.avatar?.trim();
@@ -23,31 +24,28 @@ function Avatar({ row }: { row: { screenName: string; displayName?: string; avat
     return list;
   }, [row.avatar, row.screenName]);
   const src = sources[stage];
-  if (!src) {
-    return (
-      <span
-        aria-hidden
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-200 to-emerald-200 text-sm font-semibold text-sky-900 dark:from-sky-900/60 dark:to-emerald-900/60 dark:text-sky-100"
-      >
-        {initial}
-      </span>
-    );
-  }
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      key={src}
-      src={src}
-      alt=""
-      aria-hidden
-      width={36}
-      height={36}
-      loading="lazy"
-      decoding="async"
-      referrerPolicy="no-referrer"
-      onError={() => setStage((s) => s + 1)}
-      className="h-9 w-9 shrink-0 rounded-full object-cover ring-1 ring-zinc-200 dark:ring-white/15"
-    />
+    <span className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-sky-200 to-emerald-200 ring-1 ring-zinc-200 dark:from-sky-900/60 dark:to-emerald-900/60 dark:ring-white/15">
+      <span aria-hidden className="text-[13px] font-semibold text-sky-900 dark:text-sky-100">
+        {label}
+      </span>
+      {src ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          key={src}
+          src={src}
+          alt=""
+          aria-hidden
+          width={36}
+          height={36}
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onError={() => setStage((s) => s + 1)}
+          className="absolute inset-0 h-9 w-9 rounded-full object-cover"
+        />
+      ) : null}
+    </span>
   );
 }
 
