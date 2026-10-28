@@ -11,6 +11,10 @@ import type { StatsMetricRow, StatsRankRow, StatsSnapshot } from "@/lib/stats-st
 
 type LoadState = "loading" | "ready" | "error";
 
+/** 前回のスナップショットを手元に持っておくキー（開いた瞬間に描画するため） */
+const CACHE_KEY = "nareai-stats-snapshot-v1";
+const CACHE_TTL_MS = 30 * 60 * 1000;
+
 function Avatar({ row }: { row: { screenName: string; displayName?: string; avatar?: string } }) {
   const [stage, setStage] = useState(0);
   // 頭文字は表示名から取る（ハンドルの頭1文字だけだと "C" みたいな意味不明な表示になる）
@@ -336,17 +340,37 @@ export function StatsApp() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/stats", { cache: "no-store" });
+      const res = await fetch("/api/stats");
       if (!res.ok) throw new Error("bad status");
       const json = (await res.json()) as StatsSnapshot;
       setData(json);
       setState("ready");
+      // 次回の訪問で即描画できるよう手元にも残す（30分だけ）
+      try {
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify({ at: Date.now(), data: json }));
+      } catch {
+        /* 容量超過などは無視 */
+      }
     } catch {
-      setState("error");
+      // 前回のスナップショットを表示できているなら、エラー画面に落とさない
+      setState((s) => (s === "ready" ? s : "error"));
     }
   }, []);
 
   useEffect(() => {
+    // 直前のスナップショットで先に描画しておく（待ち時間ゼロの見た目）
+    try {
+      const raw = sessionStorage.getItem(CACHE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { at?: number; data?: StatsSnapshot };
+        if (parsed?.data && Date.now() - (parsed.at ?? 0) < CACHE_TTL_MS) {
+          setData(parsed.data);
+          setState("ready");
+        }
+      }
+    } catch {
+      /* 壊れたキャッシュは無視 */
+    }
     void load();
   }, [load]);
 

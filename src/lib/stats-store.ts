@@ -645,6 +645,33 @@ function fixEmojiVariants(db: DatabaseSync): void {
 }
 
 /** 既存 DB に後から足した列を補う（WITHOUT ROWID でも ADD COLUMN は可）。 */
+/**
+ * ランキングの ORDER BY に効くインデックスを用意する。
+ * 208k 行ある users を毎回フルスキャン＋ソートすると /api/stats が 5 秒かかるため、
+ * 並べ替えキー（平均・最速・文字数・敬語率など）に式インデックスを張る。
+ * 既存DBに列が無い場合があるので、ensureColumns の後に呼ぶこと。
+ */
+function ensureIndexes(db: DatabaseSync): void {
+  const ddl = [
+    "CREATE INDEX IF NOT EXISTS users_by_rank ON users(rank_sum * 1.0 / ranked_circles) WHERE ranked_circles >= 2",
+    "CREATE INDEX IF NOT EXISTS users_by_fst ON users(fst) WHERE fst IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS users_by_reply ON users(rm_s / rm_c) WHERE rm_c > 0",
+    "CREATE INDEX IF NOT EXISTS users_by_fsm ON users(fsm) WHERE fsm IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS users_by_replyme ON users(rmm_s / rmm_c) WHERE rmm_c > 0",
+    "CREATE INDEX IF NOT EXISTS users_by_al ON users(al_s / al_c) WHERE al_c > 0",
+    "CREATE INDEX IF NOT EXISTS users_by_kr ON users(kr_s / kr_c) WHERE kr_c >= 2",
+    "CREATE INDEX IF NOT EXISTS users_by_w7 ON users(w7 DESC) WHERE w7 > 0",
+    "CREATE INDEX IF NOT EXISTS users_by_fi ON users(fi) WHERE fi IS NOT NULL",
+  ];
+  for (const sql of ddl) {
+    try {
+      db.exec(sql);
+    } catch {
+      /* 列が無い等で張れなくても致命的ではない */
+    }
+  }
+}
+
 function ensureColumns(db: DatabaseSync): void {
   const want: Array<[string, string, string]> = [
     ["peers", "rmm", "REAL"],
@@ -689,6 +716,7 @@ function openDb(rt: Runtime): DatabaseSync {
   const db = new DatabaseSync(rt.file);
   db.exec(SCHEMA);
   ensureColumns(db);
+  ensureIndexes(db);
   fixLegacyHourShift(db);
   fixEmojiVariants(db);
   if (!rt.migrated) {
