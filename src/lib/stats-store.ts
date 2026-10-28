@@ -535,6 +535,57 @@ function getMeta(db: DatabaseSync, key: string): string | null {
   return row ? String(row.v) : null;
 }
 
+/**
+ * 旧データの「時」を JST に補正する（一度だけ）。
+ *
+ * 以前は `new Date(t).getHours()` で活動時間を計算していたが、コンテナの TZ は UTC なので
+ * JST より 9 時間ずれた値が保存されていた（21時 → 12時）。ここでは保存済みの時系列を
+ * +9 時間ローテートして補正し、二度と走らないよう meta にフラグを立てる。
+ * 時系列から作ったカテゴリ（平日型/休日型・最多投稿日）は再ビルドでしか直らない。
+ */
+function fixLegacyHourShift(db: DatabaseSync): void {
+  const KEY = "hours_shift_jst";
+  try {
+    if (getMeta(db, KEY)) return;
+    const SHIFT = 9;
+
+    const hourRows = db.prepare("SELECT h, n FROM hours").all() as Array<Record<string, unknown>>;
+    if (hourRows.length > 0) {
+      db.prepare("DELETE FROM hours").run();
+      const ins = db.prepare("INSERT INTO hours(h, n) VALUES(?, ?)");
+      for (const r of hourRows) {
+        const h = Number(r.h);
+        if (!(h >= 0 && h < 24)) continue;
+        ins.run((h + SHIFT) % 24, Number(r.n ?? 0));
+      }
+    }
+
+    db.prepare(`UPDATE peers SET h = ((h + ${SHIFT}) % 24) WHERE h IS NOT NULL`).run();
+
+    const owners = db.prepare("SELECT handle, hours FROM owner WHERE hours IS NOT NULL").all() as Array<
+      Record<string, unknown>
+    >;
+    const upd = db.prepare("UPDATE owner SET hours = ? WHERE handle = ?");
+    for (const o of owners) {
+      try {
+        const arr = JSON.parse(String(o.hours)) as unknown;
+        if (!Array.isArray(arr)) continue;
+        const rotated = arr
+          .map((v) => Number(v))
+          .filter((v) => Number.isFinite(v) && v >= 0 && v < 24)
+          .map((v) => (v + SHIFT) % 24);
+        upd.run(JSON.stringify(rotated), String(o.handle));
+      } catch {
+        /* 壊れた JSON はそのまま */
+      }
+    }
+
+    setMeta(db, KEY, String(Date.now()));
+  } catch {
+    /* 補正に失敗しても統計は動かす */
+  }
+}
+
 /** 既存 DB に後から足した列を補う（WITHOUT ROWID でも ADD COLUMN は可）。 */
 function ensureColumns(db: DatabaseSync): void {
   const want: Array<[string, string, string]> = [
@@ -580,6 +631,7 @@ function openDb(rt: Runtime): DatabaseSync {
   const db = new DatabaseSync(rt.file);
   db.exec(SCHEMA);
   ensureColumns(db);
+  fixLegacyHourShift(db);
   if (!rt.migrated) {
     rt.migrated = true;
     const hasCircles = db.prepare("SELECT COUNT(*) AS n FROM circles").get();

@@ -1,4 +1,5 @@
 import { unstable_cache } from "next/cache";
+import { jstHour, jstMonthDay, jstWeekday } from "@/lib/jst";
 import {
   aggregateMentionAuthors,
   aggregateMentionTargets,
@@ -212,7 +213,7 @@ export async function buildYahooPayload(
     const hours = new Array<number>(24).fill(0);
     for (const e of mentionsFromYou) {
       if (typeof e.createdAt === "number" && e.createdAt > 0) {
-        const h = new Date(e.createdAt * 1000).getHours();
+        const h = jstHour(e.createdAt);
         hours[h] += 1;
       }
     }
@@ -248,7 +249,7 @@ export async function buildYahooPayload(
       }
     }
     const wd = new Array<number>(7).fill(0);
-    for (const t of tsSorted) wd[new Date(t * 1000).getDay()] += 1;
+    for (const t of tsSorted) wd[jstWeekday(t)] += 1;
     const wdTotal = wd.reduce((a, b) => a + b, 0);
     let weekdayType: string | undefined;
     if (wdTotal >= 10) {
@@ -278,10 +279,10 @@ export async function buildYahooPayload(
     const receivedBlocks = new Array<number>(6).fill(0);
     for (const e of mentionsToYou) {
       const t = e.createdAt ?? 0;
-      if (t > 0) receivedBlocks[blockOf(new Date(t * 1000).getHours())] += 1;
+      if (t > 0) receivedBlocks[blockOf(jstHour(t))] += 1;
     }
     const sentBlocks = new Array<number>(6).fill(0);
-    for (const t of tsSorted) sentBlocks[blockOf(new Date(t * 1000).getHours())] += 1;
+    for (const t of tsSorted) sentBlocks[blockOf(jstHour(t))] += 1;
     // 連投エピソード（15分以内に3連投）
     let burstEpisodes = 0;
     for (let i = 2; i < tsSorted.length; i++) {
@@ -292,8 +293,7 @@ export async function buildYahooPayload(
     {
       const byDay = new Map<string, number>();
       for (const t of tsSorted) {
-        const d = new Date(t * 1000);
-        const k = `${d.getMonth() + 1}/${d.getDate()}`;
+        const k = jstMonthDay(t);
         byDay.set(k, (byDay.get(k) ?? 0) + 1);
       }
       let bestK = "";

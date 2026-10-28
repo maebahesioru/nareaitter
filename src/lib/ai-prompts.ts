@@ -1,4 +1,5 @@
 import type { CircleUser } from "@/types/circle";
+import { jstDate } from "@/lib/jst";
 
 export type DiagnosisType =
   | "narikiri"
@@ -121,11 +122,11 @@ function trendArrow(w: number[] | undefined, isJa: boolean): string {
 
 function fmtTs(t: number): string {
   if (!t) return "?";
-  const d = new Date(t * 1000);
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mi = String(d.getMinutes()).padStart(2, "0");
+  const d = jstDate(t);
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mi = String(d.getUTCMinutes()).padStart(2, "0");
   return `${mm}/${dd} ${hh}:${mi}`;
 }
 

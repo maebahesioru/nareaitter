@@ -3,6 +3,8 @@ import type {
   YahooRealtimeEntry,
 } from "@/types/yahoo-realtime";
 
+import { jstHour } from "@/lib/jst";
+
 function normalizeYahooProfileImageUrl(raw: string): string | null {
   const t = raw.trim();
   if (!t) return null;
@@ -688,7 +690,7 @@ export function aggregateMentionAuthors(
     if (t > 0) {
       let hc = hourCounts.get(sn);
       if (!hc) { hc = new Array<number>(24).fill(0); hourCounts.set(sn, hc); }
-      hc[new Date(t * 1000).getHours()] += 1;
+      hc[jstHour(t)] += 1;
       const age = nowSec - t;
       if (age >= 0 && age < 35 * 86400 && map[sn]) {
         const wk = (map[sn].weekCounts ??= [0, 0, 0, 0, 0]);
