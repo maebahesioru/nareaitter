@@ -680,7 +680,7 @@ export function aggregateMentionAuthors(
       if (!em) { em = new Map(); emojiCounts.set(sn, em); }
       for (const ch of extractEmojis(txt)) em.set(ch, (em.get(ch) ?? 0) + 1);
       // 呼称（敬称の前 1〜8 文字）。文字だけを見るので絵文字や記号は混ざらない
-      for (const m of txt.matchAll(/([\p{L}\p{N}_ー]{1,8})(さん|さま|様|ちゃん|くん|君|氏|たん|りん|殿|先輩|先生|っち|っぴ|にゃん|ぴょん|たそ|きゅん|嬢)/gu)) {
+      for (const m of txt.matchAll(/([\p{L}\p{N}_ー]{1,8})(さん|さま|様|ちゃん|くん|君|氏|たん|りん|殿|先輩|先生|っぴ|にゃん|ぴょん|たそ|きゅん|嬢)/gu)) {
         const v = m[1] + m[2];
         let vm = vociCounts.get(sn);
         if (!vm) { vm = new Map(); vociCounts.set(sn, vm); }
@@ -694,7 +694,7 @@ export function aggregateMentionAuthors(
       }
       // 笑い方: 「w」1個・大文字W・わら/ワロ・藁/ｸｻ も同じ分類に入れる
       const lc = laughCounts.get(sn) ?? { w: 0, warau: 0, kusa: 0 };
-      lc.w += (txt.match(/(?<![A-Za-z])[wｗWＷ]+(?![A-Za-z])/gu) ?? []).length;
+      lc.w += (txt.match(/[ｗＷ]+|(?<![A-Za-z])[wW]+(?![A-Za-z])/gu) ?? []).length;
       lc.warau += (txt.match(/笑/g) ?? []).length + (txt.match(/わら|ワラ|ﾜﾗ|ワロ/g) ?? []).length;
       lc.kusa += (txt.match(/草|くさ|クサ|ｸｻ|藁/g) ?? []).length;
       laughCounts.set(sn, lc);
