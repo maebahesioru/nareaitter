@@ -144,7 +144,7 @@ function writeAvatarMem(key: string, url: string): void {
 }
 
 /** 確定死（存在しないアカウント等）のネガティブメモ。再ビルドのたびに無駄なリトライをしない */
-const AVATAR_DEAD_TTL_MS = 6 * 60 * 60 * 1000;
+const AVATAR_DEAD_TTL_MS = 60 * 60 * 1000;
 const avatarDeadMem = new Map<string, number>();
 
 function isAvatarKnownDead(key: string): boolean {
@@ -167,13 +167,22 @@ function writeAvatarDeadMem(key: string): void {
  * 両サービスが404を返したら確定死として即諦める（リトライラダーで数秒浪費しない）。
  */
 const avatarNoUrlMem = new Map<string, number>();
-const AVATAR_NO_URL_TTL_MS = 10 * 60 * 1000;
+const AVATAR_NO_URL_TTL_MS = 3 * 60 * 1000;
 
 /** fx/vx が劣化（429・タイムアウト連発）している間のグローバル休止（2026-10-16・ビルド爆発防止） */
 let xAvatarPauseUntil = 0;
 let xAvatarFailStreak = 0;
 const X_AVATAR_PAUSE_MS = 90_000;
 const X_AVATAR_FAIL_STREAK = 3;
+
+/** メモリ上のネガティブキャッシュとブレーカーを捨てる（手動リカバリ用） */
+export function clearXAvatarCaches(): void {
+  avatarMem.clear();
+  avatarDeadMem.clear();
+  avatarNoUrlMem.clear();
+  xAvatarPauseUntil = 0;
+  xAvatarFailStreak = 0;
+}
 
 export async function fetchXAvatarUrl(screenName: string): Promise<string | null> {
   const clean = screenName.replace(/^@/, "").trim();

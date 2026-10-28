@@ -1,3 +1,4 @@
+import { clearXAvatarCaches } from "@/lib/x-profile-image";
 import { NextRequest, NextResponse } from "next/server";
 import { backfillStatsAvatars } from "@/lib/stats-avatar-backfill";
 import { getStatsMeta, resetAvatarAttempts } from "@/lib/stats-store";
@@ -25,7 +26,10 @@ export async function GET(req: NextRequest) {
     );
   }
   gate.at = now;
-  if (force) resetAvatarAttempts();
+  if (force) {
+    resetAvatarAttempts();
+    clearXAvatarCaches();
+  }
   const saved = await backfillStatsAvatars(limit, 300);
   return NextResponse.json(
     { ok: true, limit, saved, meta: getStatsMeta() },
