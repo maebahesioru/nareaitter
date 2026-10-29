@@ -699,6 +699,8 @@ function ensureIndexes(db: DatabaseSync): void {
     "DROP INDEX IF EXISTS users_by_rank",
     "CREATE INDEX IF NOT EXISTS users_by_rel ON users(rel_sum * 1.0 / ranked_circles) WHERE ranked_circles >= 3",
     "CREATE INDEX IF NOT EXISTS users_by_fst ON users(fst) WHERE fst IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS peers_by_fs ON peers(fs) WHERE fs IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS peers_by_fsm ON peers(fsm) WHERE fsm IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS users_by_reply ON users(rm_s / rm_c) WHERE rm_c > 0",
     "CREATE INDEX IF NOT EXISTS users_by_fsm ON users(fsm) WHERE fsm IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS users_by_replyme ON users(rmm_s / rmm_c) WHERE rmm_c > 0",
@@ -1678,9 +1680,12 @@ export function getStatsSnapshot(): StatsSnapshot {
 
   const fastest = db
     .prepare(
-      `SELECT screen, display_name, avatar, fst AS v FROM users
-       WHERE appearances>0 AND fst IS NOT NULL AND fst > 0
-       ORDER BY fst ASC LIMIT 30`,
+      // users.fst は「最小値の保持」で減算時に戻せないため、peers から都度集計する
+      // （そうしないと再ビルドで値が改善しても古い最小値が残り続ける）
+      `SELECT p.screen AS screen, u.display_name AS display_name, u.avatar AS avatar, MIN(p.fs) AS v
+       FROM peers p JOIN users u ON u.screen = p.screen
+       WHERE p.fs IS NOT NULL AND p.fs > 0
+       GROUP BY p.screen ORDER BY v ASC LIMIT 30`,
     )
     .all()
     .map((x) => toMetricRow(x, Number(x.v ?? 0)));
@@ -1695,9 +1700,10 @@ export function getStatsSnapshot(): StatsSnapshot {
 
   const fastestMe = db
     .prepare(
-      `SELECT screen, display_name, avatar, fsm AS v FROM users
-       WHERE appearances>0 AND fsm IS NOT NULL AND fsm > 0
-       ORDER BY fsm ASC LIMIT 30`,
+      `SELECT p.screen AS screen, u.display_name AS display_name, u.avatar AS avatar, MIN(p.fsm) AS v
+       FROM peers p JOIN users u ON u.screen = p.screen
+       WHERE p.fsm IS NOT NULL AND p.fsm > 0
+       GROUP BY p.screen ORDER BY v ASC LIMIT 30`,
     )
     .all()
     .map((x) => toMetricRow(x, Number(x.v ?? 0)));
