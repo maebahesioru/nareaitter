@@ -25,7 +25,7 @@ function topPhrases(texts: string[], k = 6): string[] {
   for (const tx of texts) {
     const runs = (tx ?? "").match(/[\u3041-\u30FF\u4E00-\u9FFF]{2,}/g) ?? [];
     for (const run of runs) {
-      for (let n = 2; n <= Math.min(10, run.length); n++) {
+      for (let n = 2; n <= Math.min(12, run.length); n++) {
         for (let i = 0; i + n <= run.length; i++) {
           const g = run.slice(i, i + n);
           counts.set(g, (counts.get(g) ?? 0) + 1);
