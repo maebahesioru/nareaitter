@@ -124,7 +124,7 @@ function RankList({
                 {subOf(row)}
               </div>
             </div>
-            <div className="shrink-0 text-right">
+            <div className="shrink-0 whitespace-nowrap text-right">
               <div className="text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-50">
                 {valueLabel(row)}
               </div>
@@ -183,7 +183,7 @@ function MetricList({
               />
             </div>
           </div>
-          <div className="shrink-0 text-right text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-50">
+          <div className="shrink-0 whitespace-nowrap text-right text-sm font-bold tabular-nums text-zinc-900 dark:text-zinc-50">
             {format(row.value)}
             <span className="ml-0.5 text-[10px] font-normal text-zinc-500 dark:text-zinc-400">{unit}</span>
           </div>
