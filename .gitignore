@@ -47,3 +47,6 @@ next-env.d.ts
 
 # Local Netlify folder
 .netlify
+
+# 作業時のバックアップ
+*.bak-*
