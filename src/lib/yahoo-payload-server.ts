@@ -44,7 +44,7 @@ function topPhrases(texts: string[], k = 6): string[] {
     const frag = outWins.some((ow) => {
       let shared = 0;
       for (const w of gw) if (ow.has(w)) shared += 1;
-      return shared / Math.max(1, Math.min(gw.size, ow.size)) >= 0.5;
+      return shared / Math.max(1, Math.min(gw.size, ow.size)) > 0.5;
     });
     if (frag) continue;
     out.push(g);
@@ -485,14 +485,11 @@ export async function buildYahooPayload(
     // 界隈の出入り（直近14日）
     const nowMs = Date.now();
     const d14 = 14 * 86400 * 1000;
-    const newConn14d = circleUsers.filter((u) => {
-      const f = u.firstInteractionAt ? Date.parse(u.firstInteractionAt) : NaN;
-      return Number.isFinite(f) && nowMs - f <= d14;
-    }).length;
-    const dormant14d = circleUsers.filter((u) => {
-      const l = u.lastInteractionAt ? Date.parse(u.lastInteractionAt) : NaN;
-      return Number.isFinite(l) && nowMs - l > d14;
-    }).length;
+    // circleUsers は上位64人しか詳細を持たないので、全 peer の集計から数える
+    const allPeers = Object.values(authorsToYou);
+    const nowSec14 = Math.floor(nowMs / 1000);
+    const newConn14d = allPeers.filter((p) => typeof p.first === "number" && p.first > 0 && nowSec14 - p.first <= 1209600).length;
+    const dormant14d = allPeers.filter((p) => typeof p.last === "number" && p.last > 0 && nowSec14 - p.last > 1209600).length;
     recordCircleStats(name, circleUsers, {
       displayName: payload.profileDisplayName as string | undefined,
       avgLen: ownStyle?.avgLen,

@@ -679,9 +679,12 @@ export function aggregateMentionAuthors(
       let em = emojiCounts.get(sn);
       if (!em) { em = new Map(); emojiCounts.set(sn, em); }
       for (const ch of extractEmojis(txt)) em.set(ch, (em.get(ch) ?? 0) + 1);
+      // 「お疲れ様」「ご馳走さま」のような挨拶・普通名詞は呼称ではないので除外する
+      const VOCATIVE_STOP = /^(お疲れ|おつかれ|ご苦労|ご馳走|ごちそう|お世話|どちら|みな|皆|お客|奥|旦那|自分|私|そちら|こちら|あちら|どなた|皆様|みなさ)/u;
       // 呼称（敬称の前 1〜8 文字）。文字だけを見るので絵文字や記号は混ざらない
       for (const m of txt.matchAll(/([\p{L}\p{N}_ー]{1,8})(さん|さま|様|ちゃん|くん|君|氏|たん|りん|殿|先輩|先生|っぴ|にゃん|ぴょん|たそ|きゅん|嬢)/gu)) {
         const v = m[1] + m[2];
+        if (VOCATIVE_STOP.test(v)) continue;
         let vm = vociCounts.get(sn);
         if (!vm) { vm = new Map(); vociCounts.set(sn, vm); }
         vm.set(v, (vm.get(v) ?? 0) + 1);
