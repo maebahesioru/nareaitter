@@ -164,6 +164,7 @@ export type Messages = {
   statsOwnerHoursTitle: string;
   statsOwnerHoursHint: string;
   statsOwnerWeekday: string;
+  statsOwnerWeekdayHint: string;
   statsOwnerNewConn: string;
   statsOwnerDormant: string;
   statsOwnerPeakDay: string;
@@ -418,6 +419,8 @@ export const messages: Record<Locale, Messages> = {
     statsOwnerHoursTitle: "サークル主が投稿する時間帯",
     statsOwnerHoursHint: "各サークル主の一番多い1時間を合算したもの。",
     statsOwnerWeekday: "平日型 / 休日型",
+    statsOwnerWeekdayHint:
+      "20投稿以上ある人のうち、土日と平日の偏りが偶然では説明できない（統計的に有意な）人だけ型を付けています。",
     statsOwnerNewConn: "14日で新しくつながった人",
     statsOwnerDormant: "14日以上返してない相手",
     statsOwnerPeakDay: "最多投稿日",
@@ -674,6 +677,8 @@ export const messages: Record<Locale, Messages> = {
     statsOwnerHoursTitle: "When owners post",
     statsOwnerHoursHint: "Each owner's busiest hour, summed.",
     statsOwnerWeekday: "Weekday type / weekend type",
+    statsOwnerWeekdayHint:
+      "Only owners with 20+ posts whose weekend/weekday skew is statistically significant get a type.",
     statsOwnerNewConn: "New connections in 14 days",
     statsOwnerDormant: "Silent for 14+ days",
     statsOwnerPeakDay: "Busiest day",

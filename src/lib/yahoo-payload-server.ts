@@ -259,10 +259,14 @@ export async function buildYahooPayload(
     for (const t of tsSorted) wd[jstWeekday(t)] += 1;
     const wdTotal = wd.reduce((a, b) => a + b, 0);
     let weekdayType: string | undefined;
-    if (wdTotal >= 10) {
+    // 一様なら土日の割合は 2/7 ≒ 0.286。少ないサンプルで偶然の偏りを「型」と呼ばないよう、
+    // 二項分布の正規近似で有意差が出たときだけ判定する（|z| >= 2）。
+    if (wdTotal >= 20) {
       const weekend = wd[0] + wd[6];
-      const weekendRatio = weekend / wdTotal;
-      weekdayType = weekendRatio >= 0.4 ? "土日型" : weekendRatio <= 0.18 ? "平日型" : "満遍なく";
+      const p0 = 2 / 7;
+      const sd = Math.sqrt(wdTotal * p0 * (1 - p0));
+      const z = sd > 0 ? (weekend - wdTotal * p0) / sd : 0;
+      weekdayType = z >= 2 ? "土日型" : z <= -2 ? "平日型" : "満遍なく";
     }
     // 送信側の広がり（宛先のユニーク数）
     const fromYouTargets = mentionsFromYou.map((e) => ({

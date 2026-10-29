@@ -1018,6 +1018,9 @@ export function StatsApp() {
                   <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
                     {t.statsOwnerWeekday}
                   </h3>
+                  <p className="mt-1.5 text-[10px] text-zinc-500 dark:text-zinc-500">
+                    {t.statsOwnerWeekdayHint}
+                  </p>
                   <Chips items={data.owners.weekday} />
                 </div>
                 <div className="mt-5 grid gap-5 border-t border-zinc-200/70 pt-4 sm:grid-cols-2 dark:border-white/10">
