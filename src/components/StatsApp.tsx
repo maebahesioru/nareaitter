@@ -754,7 +754,7 @@ export function StatsApp() {
                 <MetricList
                   rows={data.rankings.fastest.slice(0, 10)}
                   hrefBase={hrefBase}
-                  format={(v) => v.toFixed(0)}
+                  format={(v) => (v <= 5 ? `≦${v.toFixed(0)}` : v.toFixed(0))}
                   unit={t.statsUnitSec}
                   max={data.rankings.fastest[0]?.value ?? 1}
                 />
@@ -773,7 +773,7 @@ export function StatsApp() {
                 <MetricList
                   rows={data.rankings.fastestMe.slice(0, 10)}
                   hrefBase={hrefBase}
-                  format={(v) => v.toFixed(0)}
+                  format={(v) => (v <= 5 ? `≦${v.toFixed(0)}` : v.toFixed(0))}
                   unit={t.statsUnitSec}
                   max={data.rankings.fastestMe[0]?.value ?? 1}
                 />
@@ -822,7 +822,7 @@ export function StatsApp() {
                 <MetricList
                   rows={data.rankings.bond.slice(0, 10)}
                   hrefBase={hrefBase}
-                  format={(v) => v.toFixed(0)}
+                  format={(v) => (v >= 35 ? `≧${v.toFixed(0)}` : v.toFixed(0))}
                   unit={t.statsUnitDays}
                   max={data.rankings.bond[0]?.value ?? 1}
                 />
