@@ -647,7 +647,10 @@ export function aggregateMentionAuthors(
     const sn = (e.screenName ?? "unknown").toLowerCase();
     const t = typeof e.createdAt === "number" && e.createdAt > 0 ? e.createdAt : 0;
     const nm = (e.name ?? "").trim();
-    const txt = cleanSnippet(e.displayText);
+    // 表示用スニペットは 80 字で切るが、文字数・絵文字・呼称・笑い方の計測は本文全体で行う。
+    // 切った後の長さを平均に使うと、長文の人ほど 81 字に張り付いて頭打ちになる。
+    const rawTxt = (e.displayText ?? "").replace(/\s+/g, " ").trim();
+    const txt = cleanSnippet(rawTxt);
     const is7d = t >= nowSec - 7 * 86400;
     const cur = map[sn];
     if (cur) {
@@ -675,14 +678,14 @@ export function aggregateMentionAuthors(
     } else {
       map[sn] = { n: 1, last: t, name: nm || undefined, text: txt, textT: t, first: t || undefined, firstText: t > 0 ? txt : undefined, firstTextT: t || undefined, n7: is7d ? 1 : 0, hist: txt ? [{ t, dir: "from", text: txt }] : undefined };
     }
-    if (txt) {
+    if (rawTxt) {
       let em = emojiCounts.get(sn);
       if (!em) { em = new Map(); emojiCounts.set(sn, em); }
-      for (const ch of extractEmojis(txt)) em.set(ch, (em.get(ch) ?? 0) + 1);
+      for (const ch of extractEmojis(rawTxt)) em.set(ch, (em.get(ch) ?? 0) + 1);
       // 「お疲れ様」「ご馳走さま」のような挨拶・普通名詞は呼称ではないので除外する
       const VOCATIVE_STOP = /^(お疲れ|おつかれ|ご苦労|ご馳走|ごちそう|お世話|どちら|みな|皆|お客|奥|旦那|自分|私|そちら|こちら|あちら|どなた|皆様|みなさ)/u;
       // 呼称（敬称の前 1〜8 文字）。文字だけを見るので絵文字や記号は混ざらない
-      for (const m of txt.matchAll(/([\p{L}\p{N}_ー]{1,8})(さん|さま|様|ちゃん|くん|君|氏|たん|りん|殿|先輩|先生|っぴ|にゃん|ぴょん|たそ|きゅん|嬢)/gu)) {
+      for (const m of rawTxt.matchAll(/([\p{L}\p{N}_ー]{1,8})(さん|さま|様|ちゃん|くん|君|氏|たん|りん|殿|先輩|先生|っぴ|にゃん|ぴょん|たそ|きゅん|嬢)/gu)) {
         const v = m[1] + m[2];
         if (VOCATIVE_STOP.test(v)) continue;
         let vm = vociCounts.get(sn);
@@ -690,16 +693,16 @@ export function aggregateMentionAuthors(
         vm.set(v, (vm.get(v) ?? 0) + 1);
       }
       // 文体（文字数・笑い方）
-      const clean = txt.replace(/https?:\/\/\S+/g, "").trim();
+      const clean = rawTxt.replace(/https?:\/\/\S+/g, "").trim();
       if (clean) {
         const ls = lenSums.get(sn) ?? { n: 0, sum: 0 };
         ls.n += 1; ls.sum += clean.length; lenSums.set(sn, ls);
       }
       // 笑い方: 「w」1個・大文字W・わら/ワロ・藁/ｸｻ も同じ分類に入れる
       const lc = laughCounts.get(sn) ?? { w: 0, warau: 0, kusa: 0 };
-      lc.w += (txt.match(/[ｗＷ]+|(?<![A-Za-z])[wW]+(?![A-Za-z])/gu) ?? []).length;
-      lc.warau += (txt.match(/笑/g) ?? []).length + (txt.match(/わら|ワラ|ﾜﾗ|ワロ/g) ?? []).length;
-      lc.kusa += (txt.match(/草|くさ|クサ|ｸｻ|藁/g) ?? []).length;
+      lc.w += (rawTxt.match(/[ｗＷ]+|(?<![A-Za-z])[wW]+(?![A-Za-z])/gu) ?? []).length;
+      lc.warau += (rawTxt.match(/笑/g) ?? []).length + (rawTxt.match(/わら|ワラ|ﾜﾗ|ワロ/g) ?? []).length;
+      lc.kusa += (rawTxt.match(/草|くさ|クサ|ｸｻ|藁/g) ?? []).length;
       laughCounts.set(sn, lc);
     }
     if (t > 0) {

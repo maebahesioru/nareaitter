@@ -756,7 +756,7 @@ export function StatsApp() {
                 <MetricList
                   rows={data.rankings.longest.slice(0, 10)}
                   hrefBase={hrefBase}
-                  format={(v) => (v >= 80 ? `${v.toFixed(0)}+` : v.toFixed(0))}
+                  format={(v) => v.toFixed(0)}
                   unit={t.statsUnitChars}
                   max={data.rankings.longest[0]?.value ?? 1}
                 />
@@ -815,7 +815,7 @@ export function StatsApp() {
                         value: o.avgLen ?? 0,
                       }))}
                       hrefBase={hrefBase}
-                      format={(v) => (v >= 80 ? `${v.toFixed(0)}+` : v.toFixed(0))}
+                      format={(v) => v.toFixed(0)}
                       unit={t.statsUnitChars}
                       max={data.owners.longest[0]?.avgLen ?? 1}
                     />
