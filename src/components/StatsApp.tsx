@@ -453,10 +453,30 @@ export function StatsApp() {
   const relTime = useCallback(
     (ms: number) => {
       if (!ms) return "";
+      const now = Date.now();
+      const diff = now - ms;
       const dayMs = 86_400_000;
-      const days = Math.floor((Date.now() - ms) / dayMs);
-      if (days <= 0) return t.statsToday;
-      if (days === 1) return t.statsYesterday;
+      // 0時ちょうど（日単位でしか持っていない古い行）は時刻を出さない
+      const precise = ms % dayMs !== 0;
+      const hhmm = () => {
+        try {
+          return new Date(ms).toLocaleTimeString(locale === "en" ? "en-US" : "ja-JP", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          });
+        } catch {
+          return "";
+        }
+      };
+      if (precise && diff >= 0) {
+        if (diff < 60_000) return t.statsJustNow;
+        if (diff < 3_600_000) return t.statsMinutesAgo.replace("{n}", String(Math.floor(diff / 60_000)));
+        if (diff < 21_600_000) return t.statsHoursAgo.replace("{n}", String(Math.floor(diff / 3_600_000)));
+      }
+      const days = Math.floor(diff / dayMs);
+      if (days <= 0) return precise ? `${t.statsToday} ${hhmm()}` : t.statsToday;
+      if (days === 1) return precise ? `${t.statsYesterday} ${hhmm()}` : t.statsYesterday;
       if (days < 30) return t.statsDaysAgo.replace("{n}", String(days));
       try {
         return new Date(ms).toLocaleDateString(locale === "en" ? "en-US" : "ja-JP", {

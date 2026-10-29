@@ -186,6 +186,9 @@ export type Messages = {
   statsUnitDays: string;
   statsToday: string;
   statsYesterday: string;
+  statsJustNow: string;
+  statsMinutesAgo: string;
+  statsHoursAgo: string;
   statsDaysAgo: string;
   statsCirclesHint: string;
   statsIngestTitle: string;
@@ -437,6 +440,9 @@ export const messages: Record<Locale, Messages> = {
     statsUnitTimes: "回",
     statsToday: "今日",
     statsYesterday: "昨日",
+    statsJustNow: "たった今",
+    statsMinutesAgo: "{n}分前",
+    statsHoursAgo: "{n}時間前",
     statsDaysAgo: "{n}日前",
     statsCirclesTitle: "集計済みサークル",
     statsCirclesHint: "ここに並ぶサークルのぶんだけランキングが育ちます。",
@@ -689,6 +695,9 @@ export const messages: Record<Locale, Messages> = {
     statsUnitTimes: "x",
     statsToday: "today",
     statsYesterday: "yesterday",
+    statsJustNow: "just now",
+    statsMinutesAgo: "{n}m ago",
+    statsHoursAgo: "{n}h ago",
     statsDaysAgo: "{n}d ago",
     statsCirclesTitle: "Tracked circles",
     statsCirclesHint: "The rankings grow with every circle listed here.",

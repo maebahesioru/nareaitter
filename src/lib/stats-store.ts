@@ -101,6 +101,13 @@ function toDayNum(iso: string | undefined | null): number | undefined {
   return Math.floor(ms / 86_400_000);
 }
 
+function toEpochSec(iso: string | undefined | null): number | undefined {
+  if (!iso) return undefined;
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return undefined;
+  return Math.floor(ms / 1000);
+}
+
 /** JST の YYYY-MM-DD */
 function dayKey(ms = Date.now()): string {
   const d = new Date(ms + 9 * 3_600_000);
@@ -184,6 +191,7 @@ CREATE TABLE IF NOT EXISTS peers (
   rel REAL NOT NULL DEFAULT 0,
   h  INTEGER,
   l  INTEGER,
+  ts INTEGER,
   rm REAL,
   fs INTEGER,
   rmm REAL,
@@ -713,7 +721,9 @@ function ensureColumns(db: DatabaseSync): void {
     ["peers", "rmm", "REAL"],
     ["peers", "fsm", "INTEGER"],
     ["peers", "rel", "REAL NOT NULL DEFAULT 0"],
+    ["peers", "ts", "INTEGER"],
     ["users", "rel_sum", "REAL NOT NULL DEFAULT 0"],
+    ["users", "last_ts", "INTEGER"],
     ["users", "rmm_s", "REAL NOT NULL DEFAULT 0"],
     ["users", "rmm_c", "INTEGER NOT NULL DEFAULT 0"],
     ["users", "fsm", "INTEGER"],
@@ -997,6 +1007,7 @@ type PeerRow = {
   rel: number;
   h: number | null;
   l: number | null;
+  ts: number | null;
   rm: number | null;
   fs: number | null;
   rmm: number | null;
@@ -1029,10 +1040,10 @@ const SUB_PEER = `
 const UPSERT_PEER = `
   INSERT INTO users(
     screen, display_name, avatar, appearances, mentions, received, sent,
-    rank_sum, ranked_circles, rel_sum, best_rank, first_seen, last_seen, last_active,
+    rank_sum, ranked_circles, rel_sum, best_rank, first_seen, last_seen, last_active, last_ts,
     rm_s, rm_c, al_s, al_c, kr_s, kr_c, w7, wk0, wk1, wk2, wk3, fst, fi,
     rmm_s, rmm_c, fsm
-  ) VALUES(?,?,?,1,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  ) VALUES(?,?,?,1,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   ON CONFLICT(screen) DO UPDATE SET
     display_name = COALESCE(users.display_name, excluded.display_name),
     avatar = CASE
@@ -1051,6 +1062,7 @@ const UPSERT_PEER = `
     last_active = CASE
       WHEN excluded.last_active IS NULL THEN users.last_active
       ELSE MAX(COALESCE(users.last_active, 0), excluded.last_active) END,
+    last_ts = MAX(COALESCE(users.last_ts, 0), COALESCE(excluded.last_ts, 0)),
     rm_s = users.rm_s + excluded.rm_s,
     rm_c = users.rm_c + excluded.rm_c,
     al_s = users.al_s + excluded.al_s,
@@ -1125,6 +1137,7 @@ function applyPeers(
         now,
         now,
         p.l,
+        p.ts,
         p.rm ?? 0,
         rmC,
         p.al ?? 0,
@@ -1177,7 +1190,7 @@ function dropCircle(rt: Runtime, handle: string): boolean {
   if (!circle) return false;
   const peerRows = stmt(
     rt,
-    `SELECT screen, n, r, s, k, rel, h, l, rm, fs, rmm, fsm, al, kr, w7, wk0, wk1, wk2, wk3, fi
+    `SELECT screen, n, r, s, k, rel, h, l, ts, rm, fs, rmm, fsm, al, kr, w7, wk0, wk1, wk2, wk3, fi
      FROM peers WHERE circle=?`,
   ).all(handle) as Array<Record<string, unknown>>;
   const rows: PeerRow[] = peerRows.map((x) => ({
@@ -1189,6 +1202,7 @@ function dropCircle(rt: Runtime, handle: string): boolean {
     rel: Number(x.rel ?? 0),
     h: x.h === null ? null : Number(x.h),
     l: x.l === null ? null : Number(x.l),
+    ts: x.ts === null || x.ts === undefined ? null : Number(x.ts),
     rm: x.rm === null ? null : Number(x.rm),
     fs: x.fs === null ? null : Number(x.fs),
     rmm: x.rmm === null ? null : Number(x.rmm),
@@ -1258,6 +1272,7 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
         rel: (i + 1) / Math.max(1, limit),
         h: typeof p.activeHour === "number" && p.activeHour >= 0 && p.activeHour < 24 ? p.activeHour : null,
         l: toDayNum(p.lastInteractionAt) ?? null,
+        ts: toEpochSec(p.lastInteractionAt) ?? null,
         rm: typeof p.replyThemMin === "number" && p.replyThemMin >= 0 ? p.replyThemMin : null,
         fs: typeof p.fastestThemSec === "number" && p.fastestThemSec > 0 ? p.fastestThemSec : null,
         rmm: typeof p.replyMeMin === "number" && p.replyMeMin >= 0 ? p.replyMeMin : null,
@@ -1300,8 +1315,8 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
     const insertPeer = stmt(
       rt,
       `INSERT INTO peers(
-         circle, screen, n, r, s, k, rel, h, l, rm, fs, rmm, fsm, al, kr, w7, wk0, wk1, wk2, wk3, fi
-       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         circle, screen, n, r, s, k, rel, h, l, ts, rm, fs, rmm, fsm, al, kr, w7, wk0, wk1, wk2, wk3, fi
+       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     );
     for (const p of rows) {
       insertPeer.run(
@@ -1314,6 +1329,7 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
         p.rel,
         p.h,
         p.l,
+        p.ts,
         p.rm,
         p.fs,
         p.rmm,
@@ -1554,7 +1570,7 @@ export type StatsSnapshot = {
 };
 
 const RANK_COLS = `screen, display_name, avatar, appearances, mentions, received, sent,
-  rank_sum, ranked_circles, best_rank, last_seen, last_active,
+  rank_sum, ranked_circles, best_rank, last_seen, last_active, last_ts,
   CASE WHEN ranked_circles > 0 THEN rank_sum * 1.0 / ranked_circles ELSE 999 END AS avg_rank,
   CASE WHEN ranked_circles > 0 THEN COALESCE(rel_sum, 0) * 1.0 / ranked_circles ELSE 1 END AS avg_rel`;
 
@@ -1572,7 +1588,11 @@ function toRankRow(x: Record<string, unknown>): StatsRankRow {
     avgRank: Math.round(Number(x.avg_rank ?? 999) * 10) / 10,
     rel: Math.round(Number(x.avg_rel ?? 1) * 10_000) / 10_000,
     bestRank: Number(x.best_rank ?? 0) >= 2147483647 ? 0 : Number(x.best_rank ?? 0),
-    lastSeen: lastActive ? lastActive * 86_400_000 : Number(x.last_seen ?? 0),
+    lastSeen: Number(x.last_ts ?? 0) > 0
+      ? Number(x.last_ts) * 1000
+      : lastActive
+        ? lastActive * 86_400_000
+        : Number(x.last_seen ?? 0),
   };
 }
 
@@ -1651,7 +1671,7 @@ export function getStatsSnapshot(): StatsSnapshot {
   const recent = db
     .prepare(
       `SELECT ${RANK_COLS} FROM users WHERE appearances>0
-       ORDER BY COALESCE(last_active, 0) DESC, last_seen DESC LIMIT 20`,
+       ORDER BY COALESCE(last_ts, last_active * 86400, 0) DESC, last_seen DESC LIMIT 20`,
     )
     .all()
     .map(toRankRow);
