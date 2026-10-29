@@ -142,11 +142,6 @@ function RankList({
  * 返信速度の表示。分単位で保存しているが、1分未満は秒に直して出す
  * （以前は 1分 で頭打ちしていたので、速い人が全員「1.0分」で並んでいた）。
  */
-function formatSpeed(v: number): { text: string; unit: "sec" | "min" } {
-  if (v < 1) return { text: String(Math.max(1, Math.round(v * 60))), unit: "sec" };
-  return { text: v.toFixed(1), unit: "min" };
-}
-
 function MetricList({
   rows,
   hrefBase,
@@ -195,6 +190,31 @@ function MetricList({
         </li>
       ))}
     </ol>
+  );
+}
+
+/** 返信速度は「分」と「秒」が混在しやすいので、セクション全体で単位を揃える */
+function SpeedList({
+  rows,
+  hrefBase,
+  unitSec,
+  unitMin,
+}: {
+  rows: StatsMetricRow[];
+  hrefBase: string;
+  unitSec: string;
+  unitMin: string;
+}) {
+  const useSec = rows.some((r) => r.value < 1);
+  const max = rows.reduce((m, r) => Math.max(m, r.value), 0);
+  return (
+    <MetricList
+      rows={rows}
+      hrefBase={hrefBase}
+      format={(v) => (useSec ? String(Math.max(1, Math.round(v * 60))) : v.toFixed(1))}
+      unit={useSec ? unitSec : unitMin}
+      max={max || 1}
+    />
   );
 }
 
@@ -741,12 +761,11 @@ export function StatsApp() {
               </SectionCard>
 
               <SectionCard title={t.statsReplyTitle} hint={t.statsReplyHint}>
-                <MetricList
+                <SpeedList
                   rows={data.rankings.reply.slice(0, 10)}
                   hrefBase={hrefBase}
-                  format={(v) => formatSpeed(v).text}
-                  unit={data.rankings.reply[0]?.value !== undefined && data.rankings.reply[0].value < 1 ? t.statsUnitSec : t.statsUnitMin}
-                  max={data.rankings.reply[0]?.value ?? 1}
+                  unitSec={t.statsUnitSec}
+                  unitMin={t.statsUnitMin}
                 />
               </SectionCard>
 
@@ -761,12 +780,11 @@ export function StatsApp() {
               </SectionCard>
 
               <SectionCard title={t.statsReplyMeTitle} hint={t.statsReplyMeHint}>
-                <MetricList
+                <SpeedList
                   rows={data.rankings.replyMe.slice(0, 10)}
                   hrefBase={hrefBase}
-                  format={(v) => formatSpeed(v).text}
-                  unit={data.rankings.replyMe[0]?.value !== undefined && data.rankings.replyMe[0].value < 1 ? t.statsUnitSec : t.statsUnitMin}
-                  max={data.rankings.replyMe[0]?.value ?? 1}
+                  unitSec={t.statsUnitSec}
+                  unitMin={t.statsUnitMin}
                 />
               </SectionCard>
 

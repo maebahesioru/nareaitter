@@ -4,6 +4,10 @@ import { resolveCircleAvatarUrl } from "@/lib/x-profile-image";
 
 type HistItem = { t: number; dir: "from" | "to"; text: string };
 
+/** 返信として数える最小/最大の間隔（秒）。5秒未満は読んで打てる速さではない */
+const MIN_REPLY_SEC = 5;
+const MAX_REPLY_SEC = 3600;
+
 function median(nums: number[]): number | undefined {
   if (!nums.length) return undefined;
   const s = [...nums].sort((a, b) => a - b);
@@ -23,7 +27,8 @@ function replySpeeds(hist: HistItem[]): { themMin?: number; meMin?: number; them
       const n = sorted[j];
       if (n.dir === m.dir) continue;
       const gap = n.t - m.t;
-      if (gap > 0 && gap <= 3600) {
+      // 5秒未満は同時刻の連投・分割投稿・ページ重複のノイズ（実測で上位が全部1秒に張り付いた）
+      if (gap >= MIN_REPLY_SEC && gap <= MAX_REPLY_SEC) {
         (m.dir === "to" ? themGaps : meGaps).push(gap);
       }
       break;
