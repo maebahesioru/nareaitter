@@ -216,6 +216,8 @@ CREATE TABLE IF NOT EXISTS owner (
   vocatives TEXT,
   words TEXT,
   exclaim INTEGER,
+  ex_c REAL,
+  tx_n INTEGER,
   tone TEXT,
   tone_n INTEGER,
   tone_h TEXT,
@@ -730,6 +732,8 @@ function ensureColumns(db: DatabaseSync): void {
     ["users", "rmm_c", "INTEGER NOT NULL DEFAULT 0"],
     ["users", "fsm", "INTEGER"],
     ["owner", "exclaim", "INTEGER"],
+    ["owner", "ex_c", "REAL"],
+    ["owner", "tx_n", "INTEGER"],
     ["owner", "tone", "TEXT"],
     ["owner", "tone_n", "INTEGER"],
     ["owner", "tone_h", "TEXT"],
@@ -954,6 +958,8 @@ export type StatsSelfInput = {
   avgLen?: number;
   keigoRate?: number;
   exclaimRate?: number;
+  exclaimAvg?: number;
+  textCount?: number;
   streakDays?: number;
   laugh?: string;
   emojis?: string[];
@@ -1360,9 +1366,9 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
       stmt(
         rt,
         `INSERT INTO owner(handle, display, avg_len, keigo, streak, laugh, emojis, vocatives, words,
-                           exclaim, tone, tone_n, tone_h, gap, posts, weekday, breadth, silence, followers, following, tweets, hours,
+                           exclaim, ex_c, tx_n, tone, tone_n, tone_h, gap, posts, weekday, breadth, silence, followers, following, tweets, hours,
                            newconn, dormant, out7, in7, burst, peak_day, peak_n, joined, likes, at)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(handle) DO UPDATE SET
            display = COALESCE(excluded.display, owner.display),
            avg_len = COALESCE(excluded.avg_len, owner.avg_len),
@@ -1373,6 +1379,8 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
            vocatives = COALESCE(excluded.vocatives, owner.vocatives),
            words = COALESCE(excluded.words, owner.words),
            exclaim = COALESCE(excluded.exclaim, owner.exclaim),
+           ex_c = COALESCE(excluded.ex_c, owner.ex_c),
+           tx_n = COALESCE(excluded.tx_n, owner.tx_n),
            tone = COALESCE(excluded.tone, owner.tone),
            tone_n = COALESCE(excluded.tone_n, owner.tone_n),
            tone_h = COALESCE(excluded.tone_h, owner.tone_h),
@@ -1406,6 +1414,8 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
         jsonList(self.vocatives),
         jsonList(self.words),
         numOrNull(self.exclaimRate, 0),
+        numOrNull(self.exclaimAvg, 0),
+        numOrNull(self.textCount, 1),
         self.tone ? JSON.stringify(self.tone) : null,
         numOrNull(self.tonePosts, 1),
         self.toneHits ? JSON.stringify(self.toneHits) : null,
@@ -1500,6 +1510,7 @@ export type StatsOwnerRow = {
   laugh?: string;
   emojis: string[];
   exclaim?: number;
+  exAv?: number;
   followers?: number;
   /** 直近14日で新しくつながった相手の数 */
   newConn?: number;
@@ -2010,7 +2021,7 @@ function ownerBoard(db: DatabaseSync): StatsOwnerBoard {
   try {
     const rows = db
       .prepare(
-        "SELECT o.handle, COALESCE(o.display, u.display_name) AS display, u.avatar AS avatar, o.avg_len, o.keigo, o.streak, o.laugh, o.emojis, o.vocatives, o.words, o.exclaim, o.followers, o.tone, o.tone_n, o.tone_h, o.weekday, o.hours, o.newconn, o.dormant, o.burst, o.peak_day, o.peak_n, o.joined FROM owner o LEFT JOIN users u ON u.screen = o.handle",
+        "SELECT o.handle, COALESCE(o.display, u.display_name) AS display, u.avatar AS avatar, o.avg_len, o.keigo, o.streak, o.laugh, o.emojis, o.vocatives, o.words, o.exclaim, o.ex_c, o.tx_n, o.followers, o.tone, o.tone_n, o.tone_h, o.weekday, o.hours, o.newconn, o.dormant, o.burst, o.peak_day, o.peak_n, o.joined FROM owner o LEFT JOIN users u ON u.screen = o.handle",
       )
       .all() as Array<Record<string, unknown>>;
     if (rows.length === 0) return EMPTY_OWNER_BOARD();
@@ -2024,6 +2035,7 @@ function ownerBoard(db: DatabaseSync): StatsOwnerBoard {
       laugh: (r.laugh as string | null) ?? undefined,
       emojis: parseList(r.emojis),
       exclaim: r.exclaim === null ? undefined : Number(r.exclaim),
+      exAv: r.ex_c === null ? undefined : Number(r.ex_c),
       followers: r.followers === null ? undefined : Number(r.followers),
       newConn: r.newconn === null ? undefined : Number(r.newconn),
       dormant: r.dormant === null ? undefined : Number(r.dormant),
@@ -2045,7 +2057,11 @@ function ownerBoard(db: DatabaseSync): StatsOwnerBoard {
       count: rows.length,
       longest: pick("avg_len", 10),
       keigo: pick("keigo", 10),
-      exclaim: pick("exclaim", 10),
+      exclaim: rows
+        .filter((r) => Number(r.tx_n) >= 10 && Number(r.ex_c) > 0)
+        .sort((a, b) => Number(b.ex_c) - Number(a.ex_c) || Number(b.tx_n) - Number(a.tx_n))
+        .slice(0, 10)
+        .map(toRow),
       followers: pick("followers", 10),
       newConn: pick("newconn", 10),
       dormant: pick("dormant", 10),

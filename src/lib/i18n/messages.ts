@@ -183,6 +183,7 @@ export type Messages = {
   statsUnitMin: string;
   statsUnitChars: string;
   statsUnitPercent: string;
+  statsUnitPerPost: string;
   statsUnitDays: string;
   statsToday: string;
   statsYesterday: string;
@@ -404,7 +405,7 @@ export const messages: Record<Locale, Messages> = {
     statsOwnerMoreHint:
       "フォロワー数・感嘆符の多さ・感情語・投稿する時間帯と、界隈での喋り方の内訳。",
     statsOwnerFollowers: "フォロワーが多いサークル主",
-    statsOwnerExclaim: "感嘆符（！）が多いサークル主",
+    statsOwnerExclaim: "感嘆符（！）をよく使うサークル主（1投稿あたり）",
     statsOwnerTone: "感情語の内訳",
     statsOwnerToneThanks: "感謝",
     statsOwnerToneLove: "好意",
@@ -436,6 +437,7 @@ export const messages: Record<Locale, Messages> = {
     statsUnitMin: "分",
     statsUnitChars: "文字",
     statsUnitPercent: "%",
+    statsUnitPerPost: "個/投稿",
     statsUnitDays: "日",
     statsUnitTimes: "回",
     statsToday: "今日",
@@ -659,7 +661,7 @@ export const messages: Record<Locale, Messages> = {
     statsOwnerMoreHint:
       "Followers, exclamation marks, tone words, posting hours and how they talk here.",
     statsOwnerFollowers: "Owners with the most followers",
-    statsOwnerExclaim: "Owners who overuse ！",
+    statsOwnerExclaim: "Owners who overuse ！ (per post)",
     statsOwnerTone: "Emotion words breakdown",
     statsOwnerToneThanks: "Thanks",
     statsOwnerToneLove: "Affection",
@@ -691,6 +693,7 @@ export const messages: Record<Locale, Messages> = {
     statsUnitMin: "min",
     statsUnitChars: "chars",
     statsUnitPercent: "%",
+    statsUnitPerPost: "/post",
     statsUnitDays: "d",
     statsUnitTimes: "x",
     statsToday: "today",

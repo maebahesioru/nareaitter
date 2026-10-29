@@ -867,9 +867,9 @@ export function StatsApp() {
                         value: o.keigo ?? 0,
                       }))}
                       hrefBase={hrefBase}
-                      format={(v) => v.toFixed(0)}
-                      unit={t.statsUnitPercent}
-                      max={100}
+                      format={(v) => v.toFixed(2)}
+                      unit={t.statsUnitPerPost}
+                      max={Math.max(1, ...data.owners.exclaim.map((o) => o.exAv ?? 0))}
                     />
                   </div>
                 </div>
@@ -925,7 +925,7 @@ export function StatsApp() {
                       rows={data.owners.exclaim.map((o) => ({
                         screenName: o.screenName,
                         displayName: o.displayName,
-                        value: o.exclaim ?? 0,
+                        value: o.exAv ?? 0,
                       }))}
                       hrefBase={hrefBase}
                       format={(v) => v.toFixed(0)}

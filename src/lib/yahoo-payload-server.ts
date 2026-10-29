@@ -335,6 +335,7 @@ export async function buildYahooPayload(
       const avgLen = Math.round(selfTextsClean.reduce((s, t) => s + t.length, 0) / n);
       const keigoN = selfTextsClean.filter((t) => POLITE_END.test(t.trim())).length;
       const exN = selfTextsClean.filter((t) => /[！!]/.test(t)).length;
+      const exTotal = selfTextsClean.reduce((acc, t) => acc + (t.match(/[！!]/g) ?? []).length, 0);
       let sw = 0;
       let swarau = 0;
       let skusa = 0;
@@ -358,6 +359,8 @@ export async function buildYahooPayload(
         avgLen,
         keigoRate: Math.round((keigoN / n) * 100),
         exclaimRate: Math.round((exN / n) * 100),
+        exclaimAvg: Math.round((exTotal / n) * 100) / 100,
+        textCount: n,
         laugh,
         streakDays,
       };
@@ -487,6 +490,8 @@ export async function buildYahooPayload(
           avgLen?: number;
           keigoRate?: number;
           exclaimRate?: number;
+          exclaimAvg?: number;
+          textCount?: number;
           streakDays?: number;
           laugh?: string;
         }
@@ -519,6 +524,8 @@ export async function buildYahooPayload(
       avgLen: ownStyle?.avgLen,
       keigoRate: ownStyle?.keigoRate,
       exclaimRate: ownStyle?.exclaimRate,
+      exclaimAvg: ownStyle?.exclaimAvg,
+      textCount: ownStyle?.textCount,
       streakDays: ownStyle?.streakDays,
       laugh: ownStyle?.laugh,
       emojis: payload.selfEmojis as string[] | undefined,
