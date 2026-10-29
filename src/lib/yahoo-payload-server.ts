@@ -491,7 +491,7 @@ export async function buildYahooPayload(
     const newConn14d = allPeers.filter((p) => typeof p.first === "number" && p.first > 0 && nowSec14 - p.first <= 1209600).length;
     const dormant14d = allPeers.filter((p) => typeof p.last === "number" && p.last > 0 && nowSec14 - p.last > 1209600).length;
     recordCircleStats(name, circleUsers, {
-      displayName: payload.profileDisplayName as string | undefined,
+      displayName: profileData?.name,
       avgLen: ownStyle?.avgLen,
       keigoRate: ownStyle?.keigoRate,
       exclaimRate: ownStyle?.exclaimRate,

@@ -7,6 +7,7 @@ type FxTwitterUserResponse = {
   code: number;
   message: string;
   user?: {
+    name?: string;
     avatar_url?: string;
     banner_url?: string;
     description?: string;
@@ -22,6 +23,8 @@ type FxTwitterUserResponse = {
 };
 
 export type XProfileData = {
+  /** 表示名（プロフィールの名前。@ハンドルではない） */
+  name?: string;
   followers: number;
   following: number;
   tweets: number;
@@ -327,6 +330,7 @@ export async function resolveProfileData(screenName: string): Promise<XProfileDa
       }
 
       return {
+        name: data.user.name?.trim() || undefined,
         followers: data.user.followers ?? 0,
         following: data.user.following ?? 0,
         tweets: data.user.tweets ?? 0,

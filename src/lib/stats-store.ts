@@ -717,6 +717,7 @@ function openDb(rt: Runtime): DatabaseSync {
   db.exec(SCHEMA);
   ensureColumns(db);
   ensureIndexes(db);
+  backfillOwnerDisplay(db);
   fixLegacyHourShift(db);
   fixEmojiVariants(db);
   if (!rt.migrated) {
@@ -1413,6 +1414,7 @@ export type StatsCircleRow = {
 export type StatsOwnerRow = {
   screenName: string;
   displayName?: string;
+  avatar?: string;
   avgLen?: number;
   keigo?: number;
   streak?: number;
@@ -1443,7 +1445,7 @@ export type StatsOwnerBoard = {
   /** 14日以上沈黙している相手が多い順 */
   dormant: StatsOwnerRow[];
   /** 最多投稿日ランキング（日付と件数） */
-  peakDays: Array<{ screenName: string; day: string; n: number }>;
+  peakDays: Array<{ screenName: string; displayName?: string; day: string; n: number }>;
   /** アカウント開設からの日数の中央値 */
   medianAge: number;
   /** サークル主のピーク時間帯の合計（24要素） */
@@ -1830,17 +1832,30 @@ function medianAge(rows: Array<Record<string, unknown>>): number {
 }
 
 /** サークル主たちの傾向（1ハンドル1行なのでスキャンで十分） */
+function backfillOwnerDisplay(db: DatabaseSync): void {
+  try {
+    db.exec(
+      "UPDATE owner SET display = (SELECT u.display_name FROM users u WHERE u.screen = owner.handle) " +
+        "WHERE (display IS NULL OR display = '') AND EXISTS (" +
+        "SELECT 1 FROM users u WHERE u.screen = owner.handle AND u.display_name IS NOT NULL AND u.display_name <> '')",
+    );
+  } catch {
+    /* 表示名の補完に失敗しても統計は動かす */
+  }
+}
+
 function ownerBoard(db: DatabaseSync): StatsOwnerBoard {
   try {
     const rows = db
       .prepare(
-        "SELECT handle, display, avg_len, keigo, streak, laugh, emojis, vocatives, words, exclaim, followers, tone, weekday, hours, newconn, dormant, burst, peak_day, peak_n, joined FROM owner",
+        "SELECT o.handle, COALESCE(o.display, u.display_name) AS display, u.avatar AS avatar, o.avg_len, o.keigo, o.streak, o.laugh, o.emojis, o.vocatives, o.words, o.exclaim, o.followers, o.tone, o.weekday, o.hours, o.newconn, o.dormant, o.burst, o.peak_day, o.peak_n, o.joined FROM owner o LEFT JOIN users u ON u.screen = o.handle",
       )
       .all() as Array<Record<string, unknown>>;
     if (rows.length === 0) return EMPTY_OWNER_BOARD();
     const toRow = (r: Record<string, unknown>): StatsOwnerRow => ({
       screenName: String(r.handle ?? ""),
       displayName: (r.display as string | null) ?? undefined,
+      avatar: (r.avatar as string | null) ?? undefined,
       avgLen: r.avg_len === null ? undefined : Number(r.avg_len),
       keigo: r.keigo === null ? undefined : Number(r.keigo),
       streak: r.streak === null ? undefined : Number(r.streak),
@@ -1877,6 +1892,7 @@ function ownerBoard(db: DatabaseSync): StatsOwnerBoard {
         .slice(0, 5)
         .map((r) => ({
           screenName: String(r.handle ?? ""),
+          displayName: (r.display as string | null) ?? undefined,
           day: String(r.peak_day),
           n: Number(r.peak_n),
         })),

@@ -982,6 +982,7 @@ export function StatsApp() {
                       rows={data.owners.newConn.map((o) => ({
                         screenName: o.screenName,
                         displayName: o.displayName,
+                        avatar: o.avatar,
                         value: o.newConn ?? 0,
                       }))}
                       hrefBase={hrefBase}
@@ -998,6 +999,7 @@ export function StatsApp() {
                       rows={data.owners.dormant.map((o) => ({
                         screenName: o.screenName,
                         displayName: o.displayName,
+                        avatar: o.avatar,
                         value: o.dormant ?? 0,
                       }))}
                       hrefBase={hrefBase}
@@ -1021,7 +1023,7 @@ export function StatsApp() {
                             key={`${p.screenName}-${p.day}`}
                             className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200/90 bg-white/70 px-2.5 py-1 text-[11px] text-zinc-700 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200"
                           >
-                            <span className="truncate max-w-[8rem]">@{p.screenName}</span>
+                            <span className="truncate max-w-[10rem]">{p.displayName?.trim() || `@${p.screenName}`}</span>
                             <span className="tabular-nums text-zinc-500 dark:text-zinc-400">{p.day}</span>
                             <span className="tabular-nums text-zinc-500 dark:text-zinc-400">
                               {p.n}
