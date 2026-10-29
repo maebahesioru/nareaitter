@@ -697,18 +697,24 @@ function fixStaleFirstInteraction(db: DatabaseSync): void {
   try {
     if (getMeta(db, "fi_guard_v1")) return;
     const minDay = Math.floor(Date.now() / 86_400_000) - 35;
+    // フラグを先に立てる（途中で落ちても再実行しない＝起動のたびに詰まらない）
+    setMeta(db, "fi_guard_v1", String(Date.now()));
+    try {
+      db.exec("CREATE INDEX IF NOT EXISTS peers_by_screen ON peers(screen)");
+    } catch {
+      /* 索引作成は任意 */
+    }
     db.exec("BEGIN IMMEDIATE;");
     try {
+      // 30日窓の外から再浮上した古いツイートの「初対面」記録を捨てる。
+      // users.fi は次回ビルドで peers から再計算されるので相関サブクエリは使わない（速度優先）。
       db.prepare("UPDATE peers SET fi = NULL WHERE fi IS NOT NULL AND fi < ?").run(minDay);
-      db.exec(
-        `UPDATE users SET fi = (SELECT MIN(p.fi) FROM peers p WHERE p.screen = users.screen AND p.fi IS NOT NULL)`,
-      );
+      db.prepare("UPDATE users SET fi = NULL WHERE fi IS NOT NULL AND fi < ?").run(minDay);
       db.exec("COMMIT;");
     } catch (err) {
       db.exec("ROLLBACK;");
       throw err;
     }
-    setMeta(db, "fi_guard_v1", String(Date.now()));
   } catch {
     /* 移行に失敗しても統計は動かす */
   }
