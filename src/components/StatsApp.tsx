@@ -622,16 +622,14 @@ export function StatsApp() {
                   rows={data.rankings.rank.slice(0, 30)}
                   hrefBase={hrefBase}
                   maxValue={derived.maxAvg}
-                  valueOf={(r) => -r.avgRank}
-                  valueLabel={(r) => `${r.avgRank}`}
-                  unit={locale === "en" ? "rank" : t.statsUnitRank}
-                  barPct={(r) =>
-                    ((derived.maxAvg - r.avgRank + 1) / derived.maxAvg) * 100
-                  }
+                  valueOf={(r) => -(r.rel ?? 1)}
+                  valueLabel={(r) => `${Math.max(0.1, (r.rel ?? 1) * 100).toFixed(1)}`}
+                  unit="%"
+                  barPct={(r) => Math.max(3, (1 - (r.rel ?? 1)) * 100)}
                   subOf={(r) =>
                     locale === "en"
-                      ? `${r.appearances} circles · ${r.mentions} mentions`
-                      : `${r.appearances}サークル · 延べ ${r.mentions}回`
+                      ? `${r.appearances} circles · avg ${r.avgRank}${unitRank} · ${r.mentions} mentions`
+                      : `${r.appearances}サークル · 平均 ${r.avgRank}位 · 延べ ${r.mentions}回`
                   }
                 />
               </SectionCard>

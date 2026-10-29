@@ -361,9 +361,9 @@ export const messages: Record<Locale, Messages> = {
       "何人もの人のサークルに名前が出てくる人ほど上位。界隈の「常連」の目安です。",
     statsMentionsTitle: "総交流数ランキング",
     statsMentionsHint: "集計対象のサークルでのメンション数の合計です。",
-    statsRankTitle: "サークル内の平均順位が高い人",
+    statsRankTitle: "サークル内で上位にいる人",
     statsRankHint:
-      "2サークル以上に登場した人だけを対象に、サークル内順位の平均が小さい順に並べています。",
+      "3サークル以上に登場した人を、各サークルでの順位が上位何%にあたるかの平均で並べています（5人のサークルの1位と300人のサークルの1位は重みが違うため、人数に対する位置で比べます）。",
     statsColUser: "ユーザー",
     statsColAppear: "登場",
     statsColAvgRank: "平均順位",
@@ -613,9 +613,9 @@ export const messages: Record<Locale, Messages> = {
       "People who show up in many different circles rank highest — a proxy for scene regulars.",
     statsMentionsTitle: "Total mentions",
     statsMentionsHint: "Sum of mentions across all tracked circles.",
-    statsRankTitle: "Best average rank",
+    statsRankTitle: "Consistently near the top",
     statsRankHint:
-      "Only people in 2+ circles. Sorted by average position inside their circles.",
+      "People in 3+ circles, ranked by their average position within each circle (top %). Being 1st among 5 counts differently from 1st among 300.",
     statsColUser: "User",
     statsColAppear: "Circles",
     statsColAvgRank: "Avg rank",

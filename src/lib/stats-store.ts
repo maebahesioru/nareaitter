@@ -181,6 +181,7 @@ CREATE TABLE IF NOT EXISTS peers (
   r  INTEGER NOT NULL,
   s  INTEGER NOT NULL,
   k  INTEGER NOT NULL,
+  rel REAL NOT NULL DEFAULT 0,
   h  INTEGER,
   l  INTEGER,
   rm REAL,
@@ -646,6 +647,38 @@ function fixEmojiVariants(db: DatabaseSync): void {
   }
 }
 
+/**
+ * 相対順位（サークル内で上位何割か）を既存データから一度だけ再計算する。
+ * 新規記録ぶんは recordCircleStats が rel を入れるので、ここは移行時のみ動く。
+ */
+function backfillRelativeRank(db: DatabaseSync): void {
+  try {
+    if (getMeta(db, "rank_rel_v1")) return;
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+      db.exec(
+        `UPDATE peers SET rel = k * 1.0 / (
+           SELECT c.users FROM circles c WHERE c.handle = peers.circle
+         ) WHERE (rel IS NULL OR rel = 0)`,
+      );
+      db.exec("CREATE TEMP TABLE IF NOT EXISTS _rel(screen TEXT PRIMARY KEY, s REAL)");
+      db.exec("DELETE FROM _rel");
+      db.exec("INSERT INTO _rel SELECT screen, SUM(rel) FROM peers GROUP BY screen");
+      db.exec(
+        `UPDATE users SET rel_sum = COALESCE((SELECT s FROM _rel WHERE _rel.screen = users.screen), 0)`,
+      );
+      db.exec("DROP TABLE _rel");
+      db.exec("COMMIT;");
+    } catch (err) {
+      db.exec("ROLLBACK;");
+      throw err;
+    }
+    setMeta(db, "rank_rel_v1", String(Date.now()));
+  } catch {
+    /* 移行に失敗しても統計は動かす */
+  }
+}
+
 /** 既存 DB に後から足した列を補う（WITHOUT ROWID でも ADD COLUMN は可）。 */
 /**
  * ランキングの ORDER BY に効くインデックスを用意する。
@@ -655,7 +688,8 @@ function fixEmojiVariants(db: DatabaseSync): void {
  */
 function ensureIndexes(db: DatabaseSync): void {
   const ddl = [
-    "CREATE INDEX IF NOT EXISTS users_by_rank ON users(rank_sum * 1.0 / ranked_circles) WHERE ranked_circles >= 2",
+    "DROP INDEX IF EXISTS users_by_rank",
+    "CREATE INDEX IF NOT EXISTS users_by_rel ON users(rel_sum * 1.0 / ranked_circles) WHERE ranked_circles >= 3",
     "CREATE INDEX IF NOT EXISTS users_by_fst ON users(fst) WHERE fst IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS users_by_reply ON users(rm_s / rm_c) WHERE rm_c > 0",
     "CREATE INDEX IF NOT EXISTS users_by_fsm ON users(fsm) WHERE fsm IS NOT NULL",
@@ -678,6 +712,8 @@ function ensureColumns(db: DatabaseSync): void {
   const want: Array<[string, string, string]> = [
     ["peers", "rmm", "REAL"],
     ["peers", "fsm", "INTEGER"],
+    ["peers", "rel", "REAL NOT NULL DEFAULT 0"],
+    ["users", "rel_sum", "REAL NOT NULL DEFAULT 0"],
     ["users", "rmm_s", "REAL NOT NULL DEFAULT 0"],
     ["users", "rmm_c", "INTEGER NOT NULL DEFAULT 0"],
     ["users", "fsm", "INTEGER"],
@@ -724,6 +760,7 @@ function openDb(rt: Runtime): DatabaseSync {
   backfillOwnerDisplay(db);
   fixLegacyHourShift(db);
   fixEmojiVariants(db);
+  backfillRelativeRank(db);
   if (!rt.migrated) {
     rt.migrated = true;
     const hasCircles = db.prepare("SELECT COUNT(*) AS n FROM circles").get();
@@ -957,6 +994,7 @@ type PeerRow = {
   r: number;
   s: number;
   k: number;
+  rel: number;
   h: number | null;
   l: number | null;
   rm: number | null;
@@ -978,6 +1016,7 @@ const SUB_PEER = `
     sent = MAX(0, sent - ?),
     rank_sum = MAX(0, rank_sum - ?),
     ranked_circles = MAX(0, ranked_circles - 1),
+    rel_sum = MAX(0, rel_sum - ?),
     rm_s = MAX(0, rm_s - ?), rm_c = MAX(0, rm_c - ?),
     al_s = MAX(0, al_s - ?), al_c = MAX(0, al_c - ?),
     kr_s = MAX(0, kr_s - ?), kr_c = MAX(0, kr_c - ?),
@@ -990,10 +1029,10 @@ const SUB_PEER = `
 const UPSERT_PEER = `
   INSERT INTO users(
     screen, display_name, avatar, appearances, mentions, received, sent,
-    rank_sum, ranked_circles, best_rank, first_seen, last_seen, last_active,
+    rank_sum, ranked_circles, rel_sum, best_rank, first_seen, last_seen, last_active,
     rm_s, rm_c, al_s, al_c, kr_s, kr_c, w7, wk0, wk1, wk2, wk3, fst, fi,
     rmm_s, rmm_c, fsm
-  ) VALUES(?,?,?,1,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  ) VALUES(?,?,?,1,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   ON CONFLICT(screen) DO UPDATE SET
     display_name = COALESCE(users.display_name, excluded.display_name),
     avatar = CASE
@@ -1006,6 +1045,7 @@ const UPSERT_PEER = `
     sent = users.sent + excluded.sent,
     rank_sum = users.rank_sum + excluded.rank_sum,
     ranked_circles = users.ranked_circles + 1,
+    rel_sum = users.rel_sum + excluded.rel_sum,
     best_rank = MIN(users.best_rank, excluded.best_rank),
     last_seen = MAX(users.last_seen, excluded.last_seen),
     last_active = CASE
@@ -1080,6 +1120,7 @@ function applyPeers(
         p.r,
         p.s,
         p.k,
+        p.rel,
         p.k,
         now,
         now,
@@ -1107,6 +1148,7 @@ function applyPeers(
         p.r,
         p.s,
         p.k,
+        p.rel,
         p.rm ?? 0,
         rmC,
         p.al ?? 0,
@@ -1135,7 +1177,7 @@ function dropCircle(rt: Runtime, handle: string): boolean {
   if (!circle) return false;
   const peerRows = stmt(
     rt,
-    `SELECT screen, n, r, s, k, h, l, rm, fs, rmm, fsm, al, kr, w7, wk0, wk1, wk2, wk3, fi
+    `SELECT screen, n, r, s, k, rel, h, l, rm, fs, rmm, fsm, al, kr, w7, wk0, wk1, wk2, wk3, fi
      FROM peers WHERE circle=?`,
   ).all(handle) as Array<Record<string, unknown>>;
   const rows: PeerRow[] = peerRows.map((x) => ({
@@ -1144,6 +1186,7 @@ function dropCircle(rt: Runtime, handle: string): boolean {
     r: Number(x.r ?? 0),
     s: Number(x.s ?? 0),
     k: Number(x.k ?? 1),
+    rel: Number(x.rel ?? 0),
     h: x.h === null ? null : Number(x.h),
     l: x.l === null ? null : Number(x.l),
     rm: x.rm === null ? null : Number(x.rm),
@@ -1212,6 +1255,7 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
         r: Math.max(0, p.mentionsReceived ?? 0),
         s: Math.max(0, p.mentionsSent ?? 0),
         k: i + 1,
+        rel: (i + 1) / Math.max(1, limit),
         h: typeof p.activeHour === "number" && p.activeHour >= 0 && p.activeHour < 24 ? p.activeHour : null,
         l: toDayNum(p.lastInteractionAt) ?? null,
         rm: typeof p.replyThemMin === "number" && p.replyThemMin >= 0 ? p.replyThemMin : null,
@@ -1256,8 +1300,8 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
     const insertPeer = stmt(
       rt,
       `INSERT INTO peers(
-         circle, screen, n, r, s, k, h, l, rm, fs, rmm, fsm, al, kr, w7, wk0, wk1, wk2, wk3, fi
-       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         circle, screen, n, r, s, k, rel, h, l, rm, fs, rmm, fsm, al, kr, w7, wk0, wk1, wk2, wk3, fi
+       ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     );
     for (const p of rows) {
       insertPeer.run(
@@ -1267,6 +1311,7 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
         p.r,
         p.s,
         p.k,
+        p.rel,
         p.h,
         p.l,
         p.rm,
@@ -1401,6 +1446,8 @@ export type StatsRankRow = {
   received: number;
   sent: number;
   avgRank: number;
+  /** サークル内の相対位置（1位=0.0、最下位=1.0）の平均。小さいほど上位。 */
+  rel: number;
   bestRank: number;
   lastSeen: number;
 };
@@ -1508,7 +1555,8 @@ export type StatsSnapshot = {
 
 const RANK_COLS = `screen, display_name, avatar, appearances, mentions, received, sent,
   rank_sum, ranked_circles, best_rank, last_seen, last_active,
-  CASE WHEN ranked_circles > 0 THEN rank_sum * 1.0 / ranked_circles ELSE 999 END AS avg_rank`;
+  CASE WHEN ranked_circles > 0 THEN rank_sum * 1.0 / ranked_circles ELSE 999 END AS avg_rank,
+  CASE WHEN ranked_circles > 0 THEN COALESCE(rel_sum, 0) * 1.0 / ranked_circles ELSE 1 END AS avg_rel`;
 
 function toRankRow(x: Record<string, unknown>): StatsRankRow {
   const avatar = isUsableAvatar(str(x.avatar)) ? String(x.avatar) : undefined;
@@ -1522,6 +1570,7 @@ function toRankRow(x: Record<string, unknown>): StatsRankRow {
     received: Number(x.received ?? 0),
     sent: Number(x.sent ?? 0),
     avgRank: Math.round(Number(x.avg_rank ?? 999) * 10) / 10,
+    rel: Math.round(Number(x.avg_rel ?? 1) * 10_000) / 10_000,
     bestRank: Number(x.best_rank ?? 0) >= 2147483647 ? 0 : Number(x.best_rank ?? 0),
     lastSeen: lastActive ? lastActive * 86_400_000 : Number(x.last_seen ?? 0),
   };
@@ -1593,8 +1642,8 @@ export function getStatsSnapshot(): StatsSnapshot {
 
   const byRank = db
     .prepare(
-      `SELECT ${RANK_COLS} FROM users WHERE ranked_circles>=2
-       ORDER BY (rank_sum * 1.0 / ranked_circles) ASC, appearances DESC LIMIT 40`,
+      `SELECT ${RANK_COLS} FROM users WHERE ranked_circles>=3 AND rel_sum>0
+       ORDER BY (rel_sum * 1.0 / ranked_circles) ASC, ranked_circles DESC LIMIT 40`,
     )
     .all()
     .map(toRankRow);
