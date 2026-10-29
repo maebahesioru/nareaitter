@@ -15,12 +15,17 @@ import { fetchUserBio } from "@/lib/x-profile-image";
 import { recordCircleStats } from "@/lib/stats-store";
 
 /** 頻出フレーズ抽出（日本語連続文字のn-gram・長さ重み付け＋部分重複排除） */
+const HIRA_ONLY_2 = /^[\u3041-\u309F]{2}$/;
+/** 敬体で終わっているか（文中に「です」があるだけでは加点しない） */
+const POLITE_END =
+  /(です|ます|でした|ません|ください|でしょう|ましょう|ですか|ますか|ですね|ますね|くださいませ)[。．.!！?？…\s]*$/u;
+
 function topPhrases(texts: string[], k = 6): string[] {
   const counts = new Map<string, number>();
   for (const tx of texts) {
     const runs = (tx ?? "").match(/[\u3041-\u30FF\u4E00-\u9FFF]{2,}/g) ?? [];
     for (const run of runs) {
-      for (let n = 2; n <= Math.min(5, run.length); n++) {
+      for (let n = 2; n <= Math.min(10, run.length); n++) {
         for (let i = 0; i + n <= run.length; i++) {
           const g = run.slice(i, i + n);
           counts.set(g, (counts.get(g) ?? 0) + 1);
@@ -28,29 +33,31 @@ function topPhrases(texts: string[], k = 6): string[] {
       }
     }
   }
-  const cands = [...counts.entries()].filter(([, cnt]) => cnt >= 6);
-  cands.sort((a, b) => b[1] * Math.pow(b[0].length, 1.6) - a[1] * Math.pow(a[0].length, 1.6));
-  const windows = (s: string): Set<string> => {
-    const set = new Set<string>();
-    for (let i = 0; i + 3 <= s.length; i++) set.add(s.slice(i, i + 3));
-    return set;
-  };
-  const out: string[] = [];
-  const outWins: Set<string>[] = [];
-  for (const [g] of cands) {
-    if (out.length >= k) break;
-    if (out.some((o) => o.includes(g) || g.includes(o))) continue;
-    const gw = windows(g);
-    const frag = outWins.some((ow) => {
-      let shared = 0;
-      for (const w of gw) if (ow.has(w)) shared += 1;
-      return shared / Math.max(1, Math.min(gw.size, ow.size)) > 0.5;
-    });
-    if (frag) continue;
-    out.push(g);
-    outWins.push(gw);
+  // 2文字のひらがなだけの語（です・ます・って・から等）は助詞や活用の断片なので捨てる
+  // ひらがなだけの語は助詞・活用の断片になりやすい。「ありがとう」等の挨拶だけ許可。
+  const HIRA_OK = new Set([
+    "ありがとう", "ありがと", "おはよう", "おやすみ", "おめでとう",
+    "おつかれ", "おかえり", "ごめん", "よろしく", "うれしい", "たのしい",
+  ]);
+  const JAPANESE_WORD = /[\u30A0-\u30FF\u4E00-\u9FFF]/;
+  const cands = [...counts.entries()]
+    .filter(
+      ([g, cnt]) =>
+        cnt >= 6 && !HIRA_ONLY_2.test(g) && (JAPANESE_WORD.test(g) || HIRA_OK.has(g)),
+    )
+    .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length);
+  const picked: string[] = [];
+  for (const [g, cnt] of cands) {
+    if (picked.length >= k) break;
+    if (picked.some((p) => p.includes(g) || g.includes(p))) continue;
+    // より長い語にほぼ吸収されている断片（ありがとう＋ございます → うございま）は捨てる
+    const absorbed = cands.some(
+      ([o, oc]) => o.length > g.length && o.includes(g) && oc >= cnt * 0.7,
+    );
+    if (absorbed) continue;
+    picked.push(g);
   }
-  return out;
+  return picked;
 }
 
 /** 週ごとのユニーク相手数 */
@@ -326,7 +333,7 @@ export async function buildYahooPayload(
     if (selfTextsClean.length >= 5) {
       const n = selfTextsClean.length;
       const avgLen = Math.round(selfTextsClean.reduce((s, t) => s + t.length, 0) / n);
-      const keigoN = selfTextsClean.filter((t) => /(です|ます|でした|ません|ください)/.test(t)).length;
+      const keigoN = selfTextsClean.filter((t) => POLITE_END.test(t.trim())).length;
       const exN = selfTextsClean.filter((t) => /[！!]/.test(t)).length;
       let sw = 0;
       let swarau = 0;
@@ -424,14 +431,16 @@ export async function buildYahooPayload(
     // 自分のよく使う絵文字
     const selfEmojiCounts = new Map<string, number>();
     for (const e of mentionsFromYou) {
-      for (const ch of extractEmojis(e.displayText ?? "")) {
+      const raw = e.displayText ?? "";
+      if (/^RT\s@/.test(raw)) continue;
+      for (const ch of extractEmojis(raw)) {
         selfEmojiCounts.set(ch, (selfEmojiCounts.get(ch) ?? 0) + 1);
       }
     }
     const selfEmojis = [...selfEmojiCounts.entries()]
-      .filter(([, n]) => n >= 3)
+      .filter(([, n]) => n >= 1)
       .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
+      .slice(0, 8)
       .map(([e]) => e);
     if (selfEmojis.length) payload.selfEmojis = selfEmojis;
     // 最近届いたメンション（全体の最新3件）
