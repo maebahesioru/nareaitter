@@ -373,14 +373,26 @@ export async function buildYahooPayload(
       tired: /疲れ|つかれ|眠い|ねむい|だる|しんど|きつい/,
       gloomy: /悲し|つら|辛い|不安|泣き|寂し/,
     };
+    // 母数は「自分の全投稿」（RT と空文字は除く）。メンション投稿だけだとサンプルが
+    // 小さく、10投稿に1件で 10% になるような主が平均を押し上げてしまう。
+    const toneCorpus = (() => {
+      const own = ownTweets
+        .map((e) => cleanSnippet(e.displayText, 200) ?? "")
+        .filter((t) => t && !/^RT\s@/.test(t));
+      return own.length >= 10 ? own : selfTextsClean;
+    })();
+    const tonePosts = toneCorpus.length;
+    const toneHits: Record<string, number> = {};
     const tone = (() => {
-      if (selfTextsClean.length < 10) return undefined;
-      const n = selfTextsClean.length;
+      if (tonePosts < 10) return undefined;
       const res: Record<string, number> = {};
-      for (const [key, re] of Object.entries(toneWords)) {
-        const hit = selfTextsClean.filter((t) => re.test(t)).length;
-        res[key] = Math.round((hit / n) * 100);
+      const pairs = Object.entries(toneWords);
+      for (const [key, re] of pairs) {
+        const hit = toneCorpus.filter((t) => re.test(t)).length;
+        toneHits[key] = hit;
+        res[key] = Math.round((hit / tonePosts) * 100);
       }
+      toneHits.any = toneCorpus.filter((t) => pairs.some(([, re]) => re.test(t))).length;
       return res;
     })();
     payload.selfActivity = {
@@ -501,6 +513,8 @@ export async function buildYahooPayload(
       vocatives: payload.selfVocatives as string[] | undefined,
       words: payload.communityWords as string[] | undefined,
       tone: ownActivity?.tone,
+      tonePosts: ownActivity?.tone ? tonePosts : undefined,
+      toneHits: ownActivity?.tone ? toneHits : undefined,
       postGapMin: ownActivity?.postGapMin,
       postsPerDay: ownActivity?.avgPostPerDay,
       weekdayType: ownActivity?.weekdayType,

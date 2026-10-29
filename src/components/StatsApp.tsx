@@ -901,6 +901,14 @@ export function StatsApp() {
                   <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
                     {t.statsOwnerTone}
                   </h3>
+                  <p className="mt-1 text-[10px] leading-relaxed text-zinc-500 dark:text-zinc-500">
+                    {data.owners.tonePosts > 0
+                      ? t.statsOwnerToneHint.replace(
+                          "{n}",
+                          data.owners.tonePosts.toLocaleString(locale === "en" ? "en-US" : "ja-JP"),
+                        )
+                      : t.statsOwnerToneHint}
+                  </p>
                   <div className="mt-2 grid gap-2 sm:grid-cols-2">
                     {(
                       [
@@ -908,15 +916,12 @@ export function StatsApp() {
                         ["love", t.statsOwnerToneLove],
                         ["tired", t.statsOwnerToneTired],
                         ["gloomy", t.statsOwnerToneGloomy],
+                        ...(data.owners.tonePosts > 0
+                          ? ([["neutral", t.statsOwnerToneNeutral]] as const)
+                          : []),
                       ] as const
                     ).map(([key, label]) => {
                       const v = data.owners.tone[key] ?? 0;
-                      const toneMax = Math.max(
-                        1,
-                        ...(["thanks", "love", "tired", "gloomy"] as const).map(
-                          (k) => data.owners.tone[k] ?? 0,
-                        ),
-                      );
                       return (
                         <div
                           key={key}
@@ -933,7 +938,7 @@ export function StatsApp() {
                           <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-zinc-200/80 dark:bg-white/10">
                             <div
                               className="h-full rounded-full bg-gradient-to-r from-sky-400 to-emerald-400"
-                              style={{ width: `${Math.min(100, Math.max(4, (v / toneMax) * 100))}%` }}
+                              style={{ width: `${Math.min(100, Math.max(2, v))}%` }}
                             />
                           </div>
                         </div>

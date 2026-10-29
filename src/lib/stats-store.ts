@@ -208,6 +208,8 @@ CREATE TABLE IF NOT EXISTS owner (
   words TEXT,
   exclaim INTEGER,
   tone TEXT,
+  tone_n INTEGER,
+  tone_h TEXT,
   gap REAL,
   posts REAL,
   weekday TEXT,
@@ -681,6 +683,8 @@ function ensureColumns(db: DatabaseSync): void {
     ["users", "fsm", "INTEGER"],
     ["owner", "exclaim", "INTEGER"],
     ["owner", "tone", "TEXT"],
+    ["owner", "tone_n", "INTEGER"],
+    ["owner", "tone_h", "TEXT"],
     ["owner", "gap", "REAL"],
     ["owner", "posts", "REAL"],
     ["owner", "weekday", "TEXT"],
@@ -908,6 +912,10 @@ export type StatsSelfInput = {
   words?: string[];
   /** 感情語の割合（thanks/love/tired/gloomy、%） */
   tone?: Record<string, number>;
+  /** tone の割合を出した母数（投稿数） */
+  tonePosts?: number;
+  /** 感情語ごとの出現投稿数（any はどれかに該当した投稿数） */
+  toneHits?: Record<string, number>;
   /** 投稿間隔の中央値（分） */
   postGapMin?: number;
   /** 1日あたりの投稿数 */
@@ -1289,9 +1297,9 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
       stmt(
         rt,
         `INSERT INTO owner(handle, display, avg_len, keigo, streak, laugh, emojis, vocatives, words,
-                           exclaim, tone, gap, posts, weekday, breadth, silence, followers, following, tweets, hours,
+                           exclaim, tone, tone_n, tone_h, gap, posts, weekday, breadth, silence, followers, following, tweets, hours,
                            newconn, dormant, out7, in7, burst, peak_day, peak_n, joined, likes, at)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(handle) DO UPDATE SET
            display = COALESCE(excluded.display, owner.display),
            avg_len = COALESCE(excluded.avg_len, owner.avg_len),
@@ -1303,6 +1311,8 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
            words = COALESCE(excluded.words, owner.words),
            exclaim = COALESCE(excluded.exclaim, owner.exclaim),
            tone = COALESCE(excluded.tone, owner.tone),
+           tone_n = COALESCE(excluded.tone_n, owner.tone_n),
+           tone_h = COALESCE(excluded.tone_h, owner.tone_h),
            gap = COALESCE(excluded.gap, owner.gap),
            posts = COALESCE(excluded.posts, owner.posts),
            weekday = COALESCE(excluded.weekday, owner.weekday),
@@ -1334,6 +1344,8 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
         jsonList(self.words),
         numOrNull(self.exclaimRate, 0),
         self.tone ? JSON.stringify(self.tone) : null,
+        numOrNull(self.tonePosts, 1),
+        self.toneHits ? JSON.stringify(self.toneHits) : null,
         numOrNull(self.postGapMin, 0),
         numOrNull(self.postsPerDay, 0),
         tidyName(self.weekdayType),
@@ -1452,8 +1464,10 @@ export type StatsOwnerBoard = {
   medianAge: number;
   /** サークル主のピーク時間帯の合計（24要素） */
   hours: number[];
-  /** 感情語の平均（%） */
-  tone: { thanks: number; love: number; tired: number; gloomy: number };
+  /** 感情語を含む投稿の割合（%、投稿数で重み付け／neutral はどれも含まない割合） */
+  tone: { thanks: number; love: number; tired: number; gloomy: number; neutral: number };
+  /** tone の母数になった投稿数の合計 */
+  tonePosts: number;
   weekday: Array<{ key: string; n: number }>;
   laughs: Array<{ key: string; n: number }>;
   emojis: Array<{ key: string; n: number }>;
@@ -1773,7 +1787,8 @@ function EMPTY_OWNER_BOARD(): StatsOwnerBoard {
     peakDays: [],
     medianAge: 0,
     hours: new Array(24).fill(0) as number[],
-    tone: { thanks: 0, love: 0, tired: 0, gloomy: 0 },
+    tone: { thanks: 0, love: 0, tired: 0, gloomy: 0, neutral: 0 },
+    tonePosts: 0,
     weekday: [],
     laughs: [],
     emojis: [],
@@ -1802,12 +1817,46 @@ function sumHours(rows: Array<Record<string, unknown>>): number[] {
   return out;
 }
 
-/** 感情語プロファイルの平均（tone を持つサークル主だけを母数にする） */
-function avgTone(rows: Array<Record<string, unknown>>): { thanks: number; love: number; tired: number; gloomy: number } {
+/**
+ * 感情語プロファイル。
+ * サークル主ごとの割合を単純平均すると母数の小さい主（10投稿に1件=10%）が
+ * 過大に効いて実態より高く出るため、ヒット数と投稿数の合計から算出する。
+ * ヒット数を持たない旧行しか無い場合は割合の単純平均にフォールバックする。
+ */
+function toneAggregate(rows: Array<Record<string, unknown>>): {
+  tone: { thanks: number; love: number; tired: number; gloomy: number; neutral: number };
+  posts: number;
+} {
   const keys = ["thanks", "love", "tired", "gloomy"] as const;
-  const sum: Record<string, number> = { thanks: 0, love: 0, tired: 0, gloomy: 0 };
-  let n = 0;
+  const hits: Record<string, number> = { thanks: 0, love: 0, tired: 0, gloomy: 0, any: 0 };
+  let posts = 0;
+  let hasHits = false;
+  const legacySum: Record<string, number> = { thanks: 0, love: 0, tired: 0, gloomy: 0 };
+  let legacyN = 0;
+
   for (const r of rows) {
+    const n = Number(r.tone_n ?? 0);
+    const rawH = r.tone_h;
+    if (typeof rawH === "string" && rawH && Number.isFinite(n) && n > 0) {
+      try {
+        const o = JSON.parse(rawH) as Record<string, unknown>;
+        let anySum = 0;
+        for (const k of keys) {
+          const v = Number(o[k]);
+          if (Number.isFinite(v) && v > 0) {
+            hits[k] += v;
+            anySum += v;
+          }
+        }
+        const anyV = Number(o.any);
+        hits.any += Number.isFinite(anyV) && anyV > 0 ? Math.min(anyV, n) : Math.min(anySum, n);
+        posts += n;
+        hasHits = true;
+        continue;
+      } catch {
+        /* 壊れた JSON は旧形式として扱う */
+      }
+    }
     let obj: Record<string, unknown> | null = null;
     try {
       const raw = r.tone;
@@ -1816,19 +1865,41 @@ function avgTone(rows: Array<Record<string, unknown>>): { thanks: number; love: 
       obj = null;
     }
     if (!obj || typeof obj !== "object") continue;
-    n += 1;
+    legacyN += 1;
     for (const k of keys) {
       const v = Number(obj[k]);
-      if (Number.isFinite(v)) sum[k] += v;
+      if (Number.isFinite(v)) legacySum[k] += v;
     }
   }
-  if (n === 0) return { thanks: 0, love: 0, tired: 0, gloomy: 0 };
-  return {
-    thanks: Math.round(sum.thanks / n),
-    love: Math.round(sum.love / n),
-    tired: Math.round(sum.tired / n),
-    gloomy: Math.round(sum.gloomy / n),
-  };
+
+  const pct = (num: number, den: number) => Math.round((num / den) * 1000) / 10;
+
+  if (hasHits && posts > 0) {
+    const anyPct = pct(hits.any, posts);
+    return {
+      tone: {
+        thanks: pct(hits.thanks, posts),
+        love: pct(hits.love, posts),
+        tired: pct(hits.tired, posts),
+        gloomy: pct(hits.gloomy, posts),
+        neutral: Math.max(0, Math.round((100 - anyPct) * 10) / 10),
+      },
+      posts,
+    };
+  }
+  if (legacyN > 0) {
+    return {
+      tone: {
+        thanks: Math.round(legacySum.thanks / legacyN),
+        love: Math.round(legacySum.love / legacyN),
+        tired: Math.round(legacySum.tired / legacyN),
+        gloomy: Math.round(legacySum.gloomy / legacyN),
+        neutral: 0,
+      },
+      posts: 0,
+    };
+  }
+  return { tone: { thanks: 0, love: 0, tired: 0, gloomy: 0, neutral: 0 }, posts: 0 };
 }
 
 /** アカウント開設からの日数の中央値 */
@@ -1861,7 +1932,7 @@ function ownerBoard(db: DatabaseSync): StatsOwnerBoard {
   try {
     const rows = db
       .prepare(
-        "SELECT o.handle, COALESCE(o.display, u.display_name) AS display, u.avatar AS avatar, o.avg_len, o.keigo, o.streak, o.laugh, o.emojis, o.vocatives, o.words, o.exclaim, o.followers, o.tone, o.weekday, o.hours, o.newconn, o.dormant, o.burst, o.peak_day, o.peak_n, o.joined FROM owner o LEFT JOIN users u ON u.screen = o.handle",
+        "SELECT o.handle, COALESCE(o.display, u.display_name) AS display, u.avatar AS avatar, o.avg_len, o.keigo, o.streak, o.laugh, o.emojis, o.vocatives, o.words, o.exclaim, o.followers, o.tone, o.tone_n, o.tone_h, o.weekday, o.hours, o.newconn, o.dormant, o.burst, o.peak_day, o.peak_n, o.joined FROM owner o LEFT JOIN users u ON u.screen = o.handle",
       )
       .all() as Array<Record<string, unknown>>;
     if (rows.length === 0) return EMPTY_OWNER_BOARD();
@@ -1891,6 +1962,7 @@ function ownerBoard(db: DatabaseSync): StatsOwnerBoard {
         .sort((a, b) => Number(b[key]) - Number(a[key]))
         .slice(0, limit)
         .map(toRow);
+    const toneAgg = toneAggregate(rows);
     return {
       count: rows.length,
       longest: pick("avg_len", 10),
@@ -1911,7 +1983,8 @@ function ownerBoard(db: DatabaseSync): StatsOwnerBoard {
         })),
       medianAge: medianAge(rows),
       hours: sumHours(rows),
-      tone: avgTone(rows),
+      tone: toneAgg.tone,
+      tonePosts: toneAgg.posts,
       weekday: countList(
         rows.map((r) => (r.weekday as string | null) ?? "").filter(Boolean),
         3,
