@@ -542,7 +542,7 @@ export function StatsApp() {
       ) : null}
 
       {state === "loading" ? (
-        <div className="mt-6 grid gap-3 sm:grid-cols-4">
+        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-4">
           {[0, 1, 2, 3].map((i) => (
             <div
               key={i}
@@ -611,7 +611,7 @@ export function StatsApp() {
               {t.statsEmpty}
             </p>
           ) : (
-            <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
               <SectionCard
                 title={t.statsAppearTitle}
                 hint={t.statsAppearHint}
@@ -716,7 +716,7 @@ export function StatsApp() {
                 hint={t.statsRecentHint}
                 className="lg:col-span-2"
               >
-                <ul className="mt-3 grid gap-0.5 sm:grid-cols-2">
+                <ul className="mt-3 grid grid-cols-1 gap-0.5 sm:grid-cols-2">
                   {data.rankings.recent.slice(0, 12).map((r) => (
                     <li key={r.screenName}>
                       <AppLink
@@ -839,7 +839,7 @@ export function StatsApp() {
               </SectionCard>
 
               <SectionCard title={t.statsOwnerTitle} hint={t.statsOwnerHint} className="lg:col-span-2">
-                <div className="grid gap-5 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                   <div>
                     <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
                       {t.statsOwnerLongest}
@@ -873,7 +873,7 @@ export function StatsApp() {
                     />
                   </div>
                 </div>
-                <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
                       {t.statsOwnerEmojis}
@@ -900,7 +900,7 @@ export function StatsApp() {
                 hint={t.statsOwnerMoreHint}
                 className="lg:col-span-2"
               >
-                <div className="grid gap-5 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                   <div>
                     <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
                       {t.statsOwnerFollowers}
@@ -948,7 +948,7 @@ export function StatsApp() {
                           .replace("{p}", String(Math.round((100 - data.owners.tone.neutral) * 10) / 10))
                       : t.statsOwnerToneHint}
                   </p>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
                     {(
                       [
                         ["thanks", t.statsOwnerToneThanks],
@@ -1023,7 +1023,7 @@ export function StatsApp() {
                   </p>
                   <Chips items={data.owners.weekday} />
                 </div>
-                <div className="mt-5 grid gap-5 border-t border-zinc-200/70 pt-4 sm:grid-cols-2 dark:border-white/10">
+                <div className="mt-5 grid grid-cols-1 gap-5 border-t border-zinc-200/70 pt-4 sm:grid-cols-2 dark:border-white/10">
                   <div>
                     <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
                       {t.statsOwnerNewConn}
@@ -1059,7 +1059,7 @@ export function StatsApp() {
                     />
                   </div>
                 </div>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <h3 className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">
                       {t.statsOwnerPeakDay}
