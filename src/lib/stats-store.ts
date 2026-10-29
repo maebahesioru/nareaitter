@@ -689,6 +689,31 @@ function backfillRelativeRank(db: DatabaseSync): void {
   }
 }
 
+/**
+ * 30日窓の外から再浮上した古いツイートを「初対面」として扱ってしまった既存データを一度だけ捨てる。
+ * users.fi は MIN 保持なので、2011年のような値が1件入ると永久に残るため移行で消す。
+ */
+function fixStaleFirstInteraction(db: DatabaseSync): void {
+  try {
+    if (getMeta(db, "fi_guard_v1")) return;
+    const minDay = Math.floor(Date.now() / 86_400_000) - 35;
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+      db.prepare("UPDATE peers SET fi = NULL WHERE fi IS NOT NULL AND fi < ?").run(minDay);
+      db.exec(
+        `UPDATE users SET fi = (SELECT MIN(p.fi) FROM peers p WHERE p.screen = users.screen AND p.fi IS NOT NULL)`,
+      );
+      db.exec("COMMIT;");
+    } catch (err) {
+      db.exec("ROLLBACK;");
+      throw err;
+    }
+    setMeta(db, "fi_guard_v1", String(Date.now()));
+  } catch {
+    /* 移行に失敗しても統計は動かす */
+  }
+}
+
 /** 既存 DB に後から足した列を補う（WITHOUT ROWID でも ADD COLUMN は可）。 */
 /**
  * ランキングの ORDER BY に効くインデックスを用意する。
@@ -777,6 +802,7 @@ function openDb(rt: Runtime): DatabaseSync {
   fixLegacyHourShift(db);
   fixEmojiVariants(db);
   backfillRelativeRank(db);
+  fixStaleFirstInteraction(db);
   if (!rt.migrated) {
     rt.migrated = true;
     const hasCircles = db.prepare("SELECT COUNT(*) AS n FROM circles").get();
@@ -1296,7 +1322,12 @@ export function recordCircleStats(handle: string, peers: StatsPeerInput[], self?
               Math.max(0, Math.round(weekly[3] ?? 0)),
             ]
           : [null, null, null, null],
-        fi: toDayNum(p.firstInteractionAt) ?? null,
+        // 30日窓の外から再浮上した古いツイートを「初対面」として扱わないよう、
+        // 35日より前の firstInteractionAt は捨てる
+        fi: (() => {
+          const d = toDayNum(p.firstInteractionAt);
+          return d !== undefined && d >= Math.floor(Date.now() / 86_400_000) - 35 ? d : null;
+        })(),
       });
       const rawAvatar = p.avatarUrl?.trim() || p.avatarUrlPreview?.trim() || undefined;
       const avatar = isUsableAvatar(rawAvatar) ? rawAvatar : undefined;
@@ -1695,7 +1726,7 @@ export function getStatsSnapshot(): StatsSnapshot {
       // （そうしないと再ビルドで値が改善しても古い最小値が残り続ける）
       `SELECT p.screen AS screen, u.display_name AS display_name, u.avatar AS avatar, MIN(p.fs) AS v
        FROM peers p JOIN users u ON u.screen = p.screen
-       WHERE p.fs IS NOT NULL AND p.fs > 0
+       WHERE p.fs IS NOT NULL AND p.fs >= 5
        GROUP BY p.screen ORDER BY v ASC LIMIT 30`,
     )
     .all()
@@ -1704,7 +1735,8 @@ export function getStatsSnapshot(): StatsSnapshot {
   const reply = db
     .prepare(
       `SELECT screen, display_name, avatar, (rm_s / rm_c) AS v FROM users
-       WHERE appearances>0 AND rm_c > 0 ORDER BY (rm_s / rm_c) ASC LIMIT 30`,
+       WHERE appearances>0 AND rm_c >= 2 AND (rm_s / rm_c) >= 0.08
+       ORDER BY (rm_s / rm_c) ASC, rm_c DESC LIMIT 30`,
     )
     .all()
     .map((x) => toMetricRow(x, Number(x.v ?? 0)));
@@ -1713,7 +1745,7 @@ export function getStatsSnapshot(): StatsSnapshot {
     .prepare(
       `SELECT p.screen AS screen, u.display_name AS display_name, u.avatar AS avatar, MIN(p.fsm) AS v
        FROM peers p JOIN users u ON u.screen = p.screen
-       WHERE p.fsm IS NOT NULL AND p.fsm > 0
+       WHERE p.fsm IS NOT NULL AND p.fsm >= 5
        GROUP BY p.screen ORDER BY v ASC LIMIT 30`,
     )
     .all()
@@ -1722,7 +1754,8 @@ export function getStatsSnapshot(): StatsSnapshot {
   const replyMe = db
     .prepare(
       `SELECT screen, display_name, avatar, (rmm_s / rmm_c) AS v FROM users
-       WHERE appearances>0 AND rmm_c > 0 ORDER BY (rmm_s / rmm_c) ASC LIMIT 30`,
+       WHERE appearances>0 AND rmm_c >= 2 AND (rmm_s / rmm_c) >= 0.08
+       ORDER BY (rmm_s / rmm_c) ASC, rmm_c DESC LIMIT 30`,
     )
     .all()
     .map((x) => toMetricRow(x, Number(x.v ?? 0)));
@@ -1757,9 +1790,9 @@ export function getStatsSnapshot(): StatsSnapshot {
   const bond = db
     .prepare(
       `SELECT screen, display_name, avatar, fi AS v FROM users
-       WHERE appearances>0 AND fi IS NOT NULL ORDER BY fi ASC LIMIT 30`,
+       WHERE appearances>0 AND fi IS NOT NULL AND fi >= ? ORDER BY fi ASC LIMIT 30`,
     )
-    .all()
+    .all(today - 35)
     .map((x) => toMetricRow(x, Math.max(0, today - Number(x.v ?? today))));
 
   const dailyRows = db.prepare("SELECT d, m, u FROM daily ORDER BY d ASC").all() as Array<Record<string, unknown>>;
