@@ -12,6 +12,7 @@ import type { StatsMetricRow, StatsRankRow, StatsSnapshot } from "@/lib/stats-st
 type LoadState = "loading" | "ready" | "error";
 
 /** 前回のスナップショットを手元に持っておくキー（開いた瞬間に描画するため） */
+const TONE_KEYS = ["thanks", "love", "joy", "tired", "gloomy"] as const;
 const CACHE_KEY = "nareai-stats-snapshot-v1";
 const CACHE_TTL_MS = 30 * 60 * 1000;
 
@@ -922,9 +923,10 @@ export function StatsApp() {
                     ).map(([key, label]) => {
                       const raw = data.owners.tone[key] ?? 0;
                       // 感情語を含む投稿の中での内訳（該当なしは分母から外す）
-                      // 旧形式（tonePosts=0）は neutral が無いので、生の割合をそのまま出す
-                      const base = data.owners.tonePosts > 0 ? Math.max(0.001, 100 - data.owners.tone.neutral) : 100;
-                      const v = (raw / base) * 100;
+                      // 該当した感情語の合計で正規化して内訳（合計100%）にする。
+                      // 1投稿に複数該当し得るので、分母はカテゴリの合計を使う。
+                      const sum = TONE_KEYS.reduce((acc, k) => acc + (data.owners.tone[k] ?? 0), 0);
+                      const v = sum > 0 ? (raw / sum) * 100 : 0;
                       return (
                         <div
                           key={key}
