@@ -917,6 +917,7 @@ export function StatsApp() {
                       [
                         ["thanks", t.statsOwnerToneThanks],
                         ["love", t.statsOwnerToneLove],
+                        ["joy", t.statsOwnerToneJoy],
                         ["tired", t.statsOwnerToneTired],
                         ["gloomy", t.statsOwnerToneGloomy],
                       ] as const
