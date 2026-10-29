@@ -1061,7 +1061,9 @@ export function StatsApp() {
                       href={`${hrefBase}${encodeURIComponent(c.screenName)}`}
                       className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200/90 bg-white/70 px-3 py-1 text-xs font-medium text-zinc-700 shadow-sm transition hover:border-sky-300 hover:text-sky-700 dark:border-white/10 dark:bg-white/5 dark:text-zinc-200 dark:hover:border-sky-500/50 dark:hover:text-sky-300"
                     >
-                      <span className="truncate max-w-[10rem]">@{c.screenName}</span>
+                      <span className="truncate max-w-[11rem]">
+                        {c.displayName?.trim() ? c.displayName : `@${c.screenName}`}
+                      </span>
                       <span className="text-[10px] tabular-nums text-zinc-500 dark:text-zinc-400">
                         {c.users}
                       </span>

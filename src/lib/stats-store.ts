@@ -1405,6 +1405,8 @@ export type StatsTrendPoint = { d: string; m: number; u: number };
 
 export type StatsCircleRow = {
   screenName: string;
+  displayName?: string;
+  avatar?: string;
   users: number;
   total: number;
   at: number;
@@ -1699,11 +1701,22 @@ export function getStatsSnapshot(): StatsSnapshot {
     .prepare("SELECT COALESCE(SUM(mentions),0) AS m, COUNT(*) AS u FROM users WHERE appearances>0")
     .get();
   const circles = (
-    db.prepare("SELECT handle, users, total, at FROM circles ORDER BY at DESC LIMIT 300").all() as Array<
-      Record<string, unknown>
-    >
+    db
+      .prepare(
+        `SELECT c.handle AS handle,
+                COALESCE(o.display, u.display_name) AS display,
+                u.avatar AS avatar,
+                c.users AS users, c.total AS total, c.at AS at
+           FROM circles c
+           LEFT JOIN owner o ON o.handle = c.handle
+           LEFT JOIN users u ON u.screen = c.handle
+          ORDER BY c.at DESC LIMIT 300`,
+      )
+      .all() as Array<Record<string, unknown>>
   ).map((c) => ({
     screenName: String(c.handle),
+    displayName: tidyName(typeof c.display === "string" ? c.display : null) ?? undefined,
+    avatar: typeof c.avatar === "string" && c.avatar ? c.avatar : undefined,
     users: Number(c.users ?? 0),
     total: Number(c.total ?? 0),
     at: Number(c.at ?? 0),
