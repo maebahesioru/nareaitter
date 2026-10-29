@@ -1719,8 +1719,8 @@ export function getStatsSnapshot(): StatsSnapshot {
   const longest = db
     .prepare(
       `SELECT screen, display_name, avatar, mentions, (al_s / al_c) AS v FROM users
-       WHERE appearances>0 AND al_c > 0
-       ORDER BY (al_s / al_c) DESC, mentions DESC LIMIT 30`,
+       WHERE appearances>0 AND al_c >= 2 AND mentions >= 10
+       ORDER BY (al_s / al_c) DESC, al_c DESC, mentions DESC LIMIT 30`,
     )
     .all()
     .map((x) => toMetricRow(x, Number(x.v ?? 0)));
@@ -1728,7 +1728,8 @@ export function getStatsSnapshot(): StatsSnapshot {
   const keigo = db
     .prepare(
       `SELECT screen, display_name, avatar, (kr_s / kr_c) AS v FROM users
-       WHERE appearances>0 AND kr_c >= 2 ORDER BY (kr_s / kr_c) DESC LIMIT 20`,
+       WHERE appearances>0 AND kr_c >= 3 AND mentions >= 10
+       ORDER BY (kr_s / kr_c) DESC, kr_c DESC, mentions DESC LIMIT 20`,
     )
     .all()
     .map((x) => toMetricRow(x, Number(x.v ?? 0)));
