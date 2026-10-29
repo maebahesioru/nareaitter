@@ -741,9 +741,9 @@ export function aggregateMentionAuthors(
     }
   }
   for (const [sn, cur] of Object.entries(map)) {
-    if (cur.hist && cur.hist.length > 8) {
+    if (cur.hist && cur.hist.length > 24) {
       cur.hist.sort((a, b) => b.t - a.t);
-      cur.hist = cur.hist.slice(0, 8);
+      cur.hist = cur.hist.slice(0, 24);
     }
     const kc = keigoCounts.get(sn);
     if (kc && kc.n >= 5) cur.keigo = Math.round((kc.k / kc.n) * 100);
@@ -818,9 +818,9 @@ export function aggregateMentionTargets(
     }
   }
   for (const cur of Object.values(map)) {
-    if (cur.hist && cur.hist.length > 8) {
+    if (cur.hist && cur.hist.length > 24) {
       cur.hist.sort((a, b) => b.t - a.t);
-      cur.hist = cur.hist.slice(0, 8);
+      cur.hist = cur.hist.slice(0, 24);
     }
   }
   return map;
