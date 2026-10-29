@@ -403,7 +403,7 @@ export const messages: Record<Locale, Messages> = {
     statsOwnerLaughs: "サークル主の笑い方",
     statsOwnerMoreTitle: "サークル主の中身",
     statsOwnerMoreHint:
-      "フォロワー数・感嘆符の多さ・感情語・投稿する時間帯と、界隈での喋り方の内訳。",
+      "フォロワー数・感嘆符の多さ・感情語・投稿する時間帯と、界隈での喋り方の内訳。文字数・敬語率・感嘆符は投稿10件以上の主だけを対象にしています。",
     statsOwnerFollowers: "フォロワーが多いサークル主",
     statsOwnerExclaim: "感嘆符（！）をよく使うサークル主（1投稿あたり）",
     statsOwnerTone: "感情語の内訳",
@@ -659,7 +659,7 @@ export const messages: Record<Locale, Messages> = {
     statsOwnerLaughs: "How owners laugh",
     statsOwnerMoreTitle: "Inside the owners",
     statsOwnerMoreHint:
-      "Followers, exclamation marks, tone words, posting hours and how they talk here.",
+      "Followers, exclamation marks, tone words, posting hours and how they talk here. Length, keigo rate and exclamations only count owners with 10+ posts.",
     statsOwnerFollowers: "Owners with the most followers",
     statsOwnerExclaim: "Owners who overuse ！ (per post)",
     statsOwnerTone: "Emotion words breakdown",

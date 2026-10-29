@@ -2055,8 +2055,16 @@ function ownerBoard(db: DatabaseSync): StatsOwnerBoard {
     const toneAgg = toneAggregate(rows);
     return {
       count: rows.length,
-      longest: pick("avg_len", 10),
-      keigo: pick("keigo", 10),
+      longest: rows
+        .filter((r) => Number(r.tx_n) >= 10 && Number(r.avg_len) > 0)
+        .sort((a, b) => Number(b.avg_len) - Number(a.avg_len) || Number(b.tx_n) - Number(a.tx_n))
+        .slice(0, 10)
+        .map(toRow),
+      keigo: rows
+        .filter((r) => Number(r.tx_n) >= 10 && Number(r.keigo) > 0)
+        .sort((a, b) => Number(b.keigo) - Number(a.keigo) || Number(b.tx_n) - Number(a.tx_n))
+        .slice(0, 10)
+        .map(toRow),
       exclaim: rows
         .filter((r) => Number(r.tx_n) >= 10 && Number(r.ex_c) > 0)
         .sort((a, b) => Number(b.ex_c) - Number(a.ex_c) || Number(b.tx_n) - Number(a.tx_n))
