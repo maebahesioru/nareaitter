@@ -159,6 +159,7 @@ export type Messages = {
   statsOwnerToneTired: string;
   statsOwnerToneGloomy: string;
   statsOwnerToneNeutral: string;
+  statsOwnerToneJoy: string;
   statsOwnerToneHint: string;
   statsOwnerHoursTitle: string;
   statsOwnerHoursHint: string;
@@ -407,8 +408,9 @@ export const messages: Record<Locale, Messages> = {
     statsOwnerToneTired: "疲れ",
     statsOwnerToneGloomy: "陰り",
     statsOwnerToneNeutral: "どれも無し",
+    statsOwnerToneJoy: "喜び",
     statsOwnerToneHint:
-      "サークル主の自分の投稿 {n} 件を母数に、その語を含む投稿の割合を出しています（1投稿に複数該当あり）。",
+      "サークル主の投稿 {n} 件のうち {p}% に感情語が入っています。下の内訳は、その該当した投稿の中での割合です（1投稿に複数該当あり）。",
     statsOwnerHoursTitle: "サークル主が投稿する時間帯",
     statsOwnerHoursHint: "各サークル主の一番多い1時間を合算したもの。",
     statsOwnerWeekday: "平日型 / 休日型",
@@ -658,8 +660,9 @@ export const messages: Record<Locale, Messages> = {
     statsOwnerToneTired: "Tired",
     statsOwnerToneGloomy: "Gloomy",
     statsOwnerToneNeutral: "None",
+    statsOwnerToneJoy: "Joy",
     statsOwnerToneHint:
-      "Share of posts containing each kind of word, out of {n} posts written by the circle owners (a post can match several).",
+      "{p}% of the {n} posts written by circle owners contain an emotional word. The breakdown below is a share of those matching posts (a post can match several).",
     statsOwnerHoursTitle: "When owners post",
     statsOwnerHoursHint: "Each owner's busiest hour, summed.",
     statsOwnerWeekday: "Weekday type / weekend type",

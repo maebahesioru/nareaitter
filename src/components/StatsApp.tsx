@@ -903,10 +903,12 @@ export function StatsApp() {
                   </h3>
                   <p className="mt-1 text-[10px] leading-relaxed text-zinc-500 dark:text-zinc-500">
                     {data.owners.tonePosts > 0
-                      ? t.statsOwnerToneHint.replace(
-                          "{n}",
-                          data.owners.tonePosts.toLocaleString(locale === "en" ? "en-US" : "ja-JP"),
-                        )
+                      ? t.statsOwnerToneHint
+                          .replace(
+                            "{n}",
+                            data.owners.tonePosts.toLocaleString(locale === "en" ? "en-US" : "ja-JP"),
+                          )
+                          .replace("{p}", String(Math.round((100 - data.owners.tone.neutral) * 10) / 10))
                       : t.statsOwnerToneHint}
                   </p>
                   <div className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -916,12 +918,13 @@ export function StatsApp() {
                         ["love", t.statsOwnerToneLove],
                         ["tired", t.statsOwnerToneTired],
                         ["gloomy", t.statsOwnerToneGloomy],
-                        ...(data.owners.tonePosts > 0
-                          ? ([["neutral", t.statsOwnerToneNeutral]] as const)
-                          : []),
                       ] as const
                     ).map(([key, label]) => {
-                      const v = data.owners.tone[key] ?? 0;
+                      const raw = data.owners.tone[key] ?? 0;
+                      // 感情語を含む投稿の中での内訳（該当なしは分母から外す）
+                      // 旧形式（tonePosts=0）は neutral が無いので、生の割合をそのまま出す
+                      const base = data.owners.tonePosts > 0 ? Math.max(0.001, 100 - data.owners.tone.neutral) : 100;
+                      const v = (raw / base) * 100;
                       return (
                         <div
                           key={key}
@@ -932,7 +935,7 @@ export function StatsApp() {
                               {label}
                             </span>
                             <span className="text-xs font-semibold tabular-nums text-zinc-800 dark:text-zinc-100">
-                              {v}%
+                              {v.toFixed(1)}%
                             </span>
                           </div>
                           <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-zinc-200/80 dark:bg-white/10">

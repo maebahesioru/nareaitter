@@ -1465,7 +1465,7 @@ export type StatsOwnerBoard = {
   /** サークル主のピーク時間帯の合計（24要素） */
   hours: number[];
   /** 感情語を含む投稿の割合（%、投稿数で重み付け／neutral はどれも含まない割合） */
-  tone: { thanks: number; love: number; tired: number; gloomy: number; neutral: number };
+  tone: { thanks: number; love: number; joy: number; tired: number; gloomy: number; neutral: number };
   /** tone の母数になった投稿数の合計 */
   tonePosts: number;
   weekday: Array<{ key: string; n: number }>;
@@ -1787,7 +1787,7 @@ function EMPTY_OWNER_BOARD(): StatsOwnerBoard {
     peakDays: [],
     medianAge: 0,
     hours: new Array(24).fill(0) as number[],
-    tone: { thanks: 0, love: 0, tired: 0, gloomy: 0, neutral: 0 },
+    tone: { thanks: 0, love: 0, joy: 0, tired: 0, gloomy: 0, neutral: 0 },
     tonePosts: 0,
     weekday: [],
     laughs: [],
@@ -1824,14 +1824,14 @@ function sumHours(rows: Array<Record<string, unknown>>): number[] {
  * ヒット数を持たない旧行しか無い場合は割合の単純平均にフォールバックする。
  */
 function toneAggregate(rows: Array<Record<string, unknown>>): {
-  tone: { thanks: number; love: number; tired: number; gloomy: number; neutral: number };
+  tone: { thanks: number; love: number; joy: number; tired: number; gloomy: number; neutral: number };
   posts: number;
 } {
-  const keys = ["thanks", "love", "tired", "gloomy"] as const;
-  const hits: Record<string, number> = { thanks: 0, love: 0, tired: 0, gloomy: 0, any: 0 };
+  const keys = ["thanks", "love", "joy", "tired", "gloomy"] as const;
+  const hits: Record<string, number> = { thanks: 0, love: 0, joy: 0, tired: 0, gloomy: 0, any: 0 };
   let posts = 0;
   let hasHits = false;
-  const legacySum: Record<string, number> = { thanks: 0, love: 0, tired: 0, gloomy: 0 };
+  const legacySum: Record<string, number> = { thanks: 0, love: 0, joy: 0, tired: 0, gloomy: 0 };
   let legacyN = 0;
 
   for (const r of rows) {
@@ -1880,6 +1880,7 @@ function toneAggregate(rows: Array<Record<string, unknown>>): {
       tone: {
         thanks: pct(hits.thanks, posts),
         love: pct(hits.love, posts),
+        joy: pct(hits.joy, posts),
         tired: pct(hits.tired, posts),
         gloomy: pct(hits.gloomy, posts),
         neutral: Math.max(0, Math.round((100 - anyPct) * 10) / 10),
@@ -1892,6 +1893,7 @@ function toneAggregate(rows: Array<Record<string, unknown>>): {
       tone: {
         thanks: Math.round(legacySum.thanks / legacyN),
         love: Math.round(legacySum.love / legacyN),
+        joy: Math.round(legacySum.joy / legacyN),
         tired: Math.round(legacySum.tired / legacyN),
         gloomy: Math.round(legacySum.gloomy / legacyN),
         neutral: 0,
@@ -1899,7 +1901,7 @@ function toneAggregate(rows: Array<Record<string, unknown>>): {
       posts: 0,
     };
   }
-  return { tone: { thanks: 0, love: 0, tired: 0, gloomy: 0, neutral: 0 }, posts: 0 };
+  return { tone: { thanks: 0, love: 0, joy: 0, tired: 0, gloomy: 0, neutral: 0 }, posts: 0 };
 }
 
 /** アカウント開設からの日数の中央値 */
